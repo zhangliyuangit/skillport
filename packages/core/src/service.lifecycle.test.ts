@@ -59,6 +59,22 @@ describe("scan", () => {
       { name: "same", classification: "identical", agents: ["codex", "claude"] }
     ]);
   });
+
+  it("skips unrelated directories without a SKILL.md", async () => {
+    const f = await fixture();
+    await mkdir(path.join(f.codexRoot, "codex-primary-runtime"), {
+      recursive: true
+    });
+    await skill(f.codexRoot, "real-skill", "# Real Skill");
+
+    expect(await f.service.scan()).toEqual([
+      {
+        name: "real-skill",
+        classification: "single-source",
+        agents: ["codex"]
+      }
+    ]);
+  });
 });
 
 describe("managed lifecycle", () => {

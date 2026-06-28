@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentAdapter, AgentEntry } from "./agents.js";
 import type { AgentId, ManagedSkill, SyncMode } from "./domain.js";
@@ -222,11 +222,13 @@ export class SkillPortService {
       const fingerprints = new Set<string>();
       let managed = Boolean(state.skills[name]);
       for (const agent of this.options.agents) {
+        if (!(await hasSkillManifest(agent.skillPath(name)))) continue;
         const entry = await agent.inspect(name, this.canonicalPath(name));
         if (entry.kind !== "missing") agents.push(agent.id);
         if (entry.kind === "local") fingerprints.add(entry.fingerprint);
         if (entry.kind === "managed-link") managed = true;
       }
+      if (agents.length === 0) continue;
       discovered.push({
         name,
         classification: managed
@@ -426,6 +428,20 @@ export class SkillPortService {
     }
     return { candidates, entries };
   }
+}
+
+async function hasSkillManifest(skillPath: string): Promise<boolean> {
+  return stat(path.join(skillPath, "SKILL.md"))
+    .then((entry) => entry.isFile())
+    .catch((error: unknown) => {
+      if (
+        isNodeError(error) &&
+        (error.code === "ENOENT" || error.code === "ENOTDIR")
+      ) {
+        return false;
+      }
+      throw error;
+    });
 }
 
 async function inspectCanonical(pathname: string) {

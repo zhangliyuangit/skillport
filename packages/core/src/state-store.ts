@@ -26,12 +26,8 @@ const githubSourceSchema = z
 const managedSkillSchema = z
   .object({
     name: z.string().min(1),
-    agents: z
-      .object({
-        codex: z.enum(["symlink", "copy"]),
-        claude: z.enum(["symlink", "copy"])
-      })
-      .strict(),
+    agents: z.record(z.string().min(1), z.enum(["symlink", "copy"])),
+    disabled: z.array(z.string().min(1)).optional(),
     fingerprint: z.string().min(1),
     source: githubSourceSchema.optional(),
     updatedAt: z.string().datetime()

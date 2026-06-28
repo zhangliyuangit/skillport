@@ -1,5 +1,6 @@
 import type {
   AddResult,
+  AgentConfig,
   AgentId,
   DiscoveredSkill,
   ManagedSkill,
@@ -14,10 +15,21 @@ export interface ApiService {
   list(): Promise<ManagedSkill[]>;
   status(name?: string): Promise<SkillStatusReport[]>;
   diff(name: string): Promise<SkillDiff>;
+  preview(name: string, agent?: AgentId): Promise<{ name: string; text: string; truncated: boolean }>;
   add(name: string, from?: AgentId): Promise<AddResult>;
   install(url: string, path?: string, from?: AgentId | "github"): Promise<AddResult>;
   sync(name: string, source: AgentId | "central"): Promise<AddResult>;
+  enable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
+  disable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
+  deleteSkill(agent: AgentId, name: string): Promise<{ kind: "completed"; name: string; agent: AgentId }>;
   remove(name: string): Promise<{ kind: "completed"; name: string }>;
+}
+
+export interface AgentAdminApi {
+  list(): Promise<AgentConfig[]>;
+  add(id: string, root: string): Promise<AgentConfig[]>;
+  remove(id: string): Promise<AgentConfig[]>;
+  populate(id: string): Promise<{ installed: string[]; skipped: string[] }>;
 }
 
 export interface ApiError {
@@ -30,9 +42,14 @@ export function buildApp(options: {
   service: ApiService;
   token: string;
   origin: string | (() => string);
+  agents?: AgentAdminApi;
 }): FastifyInstance {
   const app = Fastify({ logger: false });
   const { service, token } = options;
+  const requireAgents = (): AgentAdminApi => {
+    if (!options.agents) throw new Error("Agent management is unavailable");
+    return options.agents;
+  };
 
   app.addHook("onRequest", async (request, reply) => {
     if (request.url.startsWith("/api/")) {
@@ -83,9 +100,18 @@ export function buildApp(options: {
     service.diff(request.params.name)
   );
 
+  app.get<{ Params: { name: string } }>("/api/skills/:name/content", async (request) =>
+    service.preview(request.params.name)
+  );
+
+  app.get<{ Params: { agentId: string; name: string } }>(
+    "/api/agents/:agentId/skills/:name/content",
+    async (request) => service.preview(request.params.name, request.params.agentId)
+  );
+
   app.post<{ Params: { name: string } }>("/api/skills/:name/add", async (request, reply) => {
     const body = z
-      .object({ from: z.enum(["codex", "claude"]).optional() })
+      .object({ from: z.string().min(1).optional() })
       .strict()
       .parse(request.body ?? {});
     return sendOperation(reply, await service.add(request.params.name, body.from));
@@ -96,7 +122,7 @@ export function buildApp(options: {
       .object({
         url: z.string().url(),
         path: z.string().min(1).optional(),
-        from: z.enum(["github", "codex", "claude"]).optional()
+        from: z.string().min(1).optional()
       })
       .strict()
       .parse(request.body);
@@ -105,14 +131,47 @@ export function buildApp(options: {
 
   app.post<{ Params: { name: string } }>("/api/skills/:name/sync", async (request, reply) => {
     const body = z
-      .object({ from: z.enum(["central", "codex", "claude"]) })
+      .object({ from: z.string().min(1) })
       .strict()
       .parse(request.body);
     return sendOperation(reply, await service.sync(request.params.name, body.from));
   });
 
+  app.post<{ Params: { name: string } }>("/api/skills/:name/disable", async (request) => {
+    const body = z.object({ agent: z.string().min(1) }).strict().parse(request.body);
+    return service.disable(request.params.name, body.agent);
+  });
+
+  app.post<{ Params: { name: string } }>("/api/skills/:name/enable", async (request) => {
+    const body = z.object({ agent: z.string().min(1) }).strict().parse(request.body);
+    return service.enable(request.params.name, body.agent);
+  });
+
   app.delete<{ Params: { name: string } }>("/api/skills/:name", async (request) =>
     service.remove(request.params.name)
+  );
+
+  app.delete<{ Params: { agentId: string; name: string } }>(
+    "/api/agents/:agentId/skills/:name",
+    async (request) => service.deleteSkill(request.params.agentId, request.params.name)
+  );
+
+  app.get("/api/agents", async () => requireAgents().list());
+
+  app.post("/api/agents", async (request) => {
+    const body = z
+      .object({ id: z.string().min(1), root: z.string().min(1) })
+      .strict()
+      .parse(request.body);
+    return requireAgents().add(body.id, body.root);
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/agents/:id", async (request) =>
+    requireAgents().remove(request.params.id)
+  );
+
+  app.post<{ Params: { id: string } }>("/api/agents/:id/populate", async (request) =>
+    requireAgents().populate(request.params.id)
   );
 
   return app;

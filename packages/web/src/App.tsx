@@ -7,10 +7,19 @@ import { DiscoverPage } from "./features/discover/DiscoverPage.js";
 import { InstallDialog } from "./features/install/InstallDialog.js";
 import { SettingsPage } from "./features/settings/SettingsPage.js";
 import { SkillsPage } from "./features/skills/SkillsPage.js";
+import { ToastProvider } from "./features/toast/Toast.js";
 
 type Page = "skills" | "discover" | "settings";
 
 export function App({ api }: { api: SkillPortApi }) {
+  return (
+    <ToastProvider>
+      <AppShell api={api} />
+    </ToastProvider>
+  );
+}
+
+function AppShell({ api }: { api: SkillPortApi }) {
   const [page, setPage] = useState<Page>("skills");
   const [installOpen, setInstallOpen] = useState(false);
 
@@ -40,7 +49,7 @@ export function App({ api }: { api: SkillPortApi }) {
           <SkillsPage api={api} onInstall={() => setInstallOpen(true)} />
         )}
         {page === "discover" && <DiscoverPage api={api} />}
-        {page === "settings" && <SettingsPage />}
+        {page === "settings" && <SettingsPage api={api} />}
       </main>
 
       {installOpen && (

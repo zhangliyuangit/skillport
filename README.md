@@ -9,6 +9,8 @@ SkillPort 是一个本地优先的 Skill 管理器，用同一个中心目录管
 - 默认使用软链接；不支持时可使用复制模式
 - 检测两端内容冲突，并要求明确选择来源
 - 查看状态与文本差异，按 Codex、Claude 或中心版本同步
+- 在保留管理的前提下，单独关闭或开启某个客户端
+- 内置 Codex、Claude Code，并可注册任意自定义 Agent（如 qoder）
 - 从公开 GitHub 仓库根目录或指定子目录安装 Skill
 - 在本机浏览器中使用中文管理页面
 
@@ -82,12 +84,37 @@ skillport sync pdf --from codex
 skillport sync pdf --from claude
 skillport sync pdf --from central
 
+# 单独关闭/开启某个客户端（保留中心副本，可随时恢复）
+skillport disable pdf --agent codex
+skillport enable pdf --agent codex
+
+# 管理 Agent 端：内置 codex/claude，可注册任意自定义 Agent
+skillport agent list
+skillport agent add qoder --root ~/.qoder/skills
+skillport agent populate qoder   # 把已有受管 Skill 补齐到新 Agent
+skillport agent remove qoder
+
 # 从公开 GitHub 仓库安装
 skillport install https://github.com/acme/skills
 skillport install https://github.com/acme/skills --path skills/pdf
 
+# 删除某个 Agent 里未纳管的 Skill（移入 ~/.skillport/trash，可手动恢复）
+skillport delete junk --agent codex
+
 # 停止管理，但保留 Codex 与 Claude Code 中可独立使用的副本
 skillport remove pdf
+
+# 全部停止管理：把每个 Skill 的软链接换成各端独立真实副本（卸载前的安全脱钩）
+skillport remove --all
+
+# 快照：sync 前会自动打快照，也可手动；可列出、回滚
+skillport snapshot create --label 改动前
+skillport snapshot list
+skillport snapshot restore 2026-06-28T16-10-36-658Z
+
+# 一键安全卸载：脱钩为各端独立副本；--purge 同时删除 ~/.skillport
+skillport uninstall
+skillport uninstall --purge
 
 # 打开本地中文管理页面
 skillport ui
@@ -108,13 +135,16 @@ No files were changed.
 ```text
 ~/.skillport/
 ├── skills/       # 中心 Skill 副本
-└── state.json    # 受管状态
+├── state.json    # 受管状态
+└── config.json   # 已注册的 Agent 端（不存在时使用内置默认）
 ```
 
 默认 Agent 目录：
 
 - Codex：`~/.codex/skills`
 - Claude Code：`~/.claude/skills`
+
+用 `skillport agent add <id> --root <绝对路径>` 注册更多 Agent（例如 qoder、qoder-cli），也可以在管理页面的「设置」里添加。注册后，新纳入的 Skill 会同步到所有已配置的 Agent；已有 Skill 用 `skillport agent populate <id>`（或设置页的「补齐」按钮）一次性装进新增的 Agent。管理页面的技能 / 发现页会按所有已配置 Agent 动态出列。
 
 可以用 `SKILLPORT_HOME` 为测试或隔离环境指定另一个 SkillPort 目录。
 

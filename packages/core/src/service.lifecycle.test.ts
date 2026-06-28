@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   stat,
   symlink,
   writeFile
@@ -88,6 +89,165 @@ describe("scan", () => {
       { name: "good", classification: "single-source", agents: ["codex"] },
       { name: "pyskill", classification: "error", agents: ["codex"] }
     ]);
+  });
+});
+
+describe("enable/disable per Agent", () => {
+  it("turns one Agent off and back on while keeping the other intact", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "pdf", "# PDF");
+    await f.service.add("pdf");
+
+    await f.service.disable("pdf", "codex");
+    expect(await f.service.status("pdf")).toMatchObject([
+      { name: "pdf", overall: "Synced", agents: { codex: "disabled", claude: "linked" } }
+    ]);
+    await expect(lstat(path.join(f.codexRoot, "pdf"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await lstat(path.join(f.claudeRoot, "pdf"))).isSymbolicLink()).toBe(true);
+    expect((await stat(path.join(f.root, "skills", "pdf", "SKILL.md"))).isFile()).toBe(true);
+
+    await f.service.enable("pdf", "codex");
+    expect(await f.service.status("pdf")).toMatchObject([
+      { name: "pdf", overall: "Synced", agents: { codex: "linked", claude: "linked" } }
+    ]);
+    expect((await lstat(path.join(f.codexRoot, "pdf"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("refuses to disable the last active Agent", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "pdf", "# PDF");
+    await f.service.add("pdf");
+    await f.service.disable("pdf", "codex");
+    await expect(f.service.disable("pdf", "claude")).rejects.toThrow(/last active Agent/);
+  });
+});
+
+describe("custom Agents", () => {
+  it("manages a Skill across three configured Agents", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "skillport-multi-"));
+    const root = path.join(home, ".skillport");
+    const roots = {
+      codex: path.join(home, ".codex", "skills"),
+      claude: path.join(home, ".claude", "skills"),
+      qoder: path.join(home, ".qoder", "skills")
+    };
+    const service = new SkillPortService({
+      root,
+      stateStore: new StateStore(root),
+      agents: [
+        new AgentAdapter("codex", roots.codex),
+        new AgentAdapter("claude", roots.claude),
+        new AgentAdapter("qoder", roots.qoder)
+      ]
+    });
+    await skill(roots.codex, "pdf", "# PDF");
+    await service.add("pdf");
+
+    for (const dir of Object.values(roots)) {
+      expect((await lstat(path.join(dir, "pdf"))).isSymbolicLink()).toBe(true);
+    }
+    expect(await service.status("pdf")).toMatchObject([
+      {
+        name: "pdf",
+        overall: "Synced",
+        agents: { codex: "linked", claude: "linked", qoder: "linked" }
+      }
+    ]);
+
+    await service.disable("pdf", "qoder");
+    expect(await service.status("pdf")).toMatchObject([
+      { name: "pdf", overall: "Synced", agents: { qoder: "disabled" } }
+    ]);
+    await expect(lstat(path.join(roots.qoder, "pdf"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("populates a newly added Agent with existing managed Skills", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "skillport-pop-"));
+    const root = path.join(home, ".skillport");
+    const codexRoot = path.join(home, ".codex", "skills");
+    const claudeRoot = path.join(home, ".claude", "skills");
+    const qoderRoot = path.join(home, ".qoder", "skills");
+    const service = new SkillPortService({
+      root,
+      stateStore: new StateStore(root),
+      agents: [
+        new AgentAdapter("codex", codexRoot),
+        new AgentAdapter("claude", claudeRoot)
+      ]
+    });
+    await skill(codexRoot, "pdf", "# PDF");
+    await service.add("pdf");
+
+    // Register qoder after the Skill is already managed.
+    service.setAgents([
+      new AgentAdapter("codex", codexRoot),
+      new AgentAdapter("claude", claudeRoot),
+      new AgentAdapter("qoder", qoderRoot)
+    ]);
+    expect(await service.status("pdf")).toMatchObject([
+      { name: "pdf", overall: "Missing", agents: { qoder: "missing" } }
+    ]);
+
+    const result = await service.populate("qoder");
+    expect(result.installed).toEqual(["pdf"]);
+    expect((await lstat(path.join(qoderRoot, "pdf"))).isSymbolicLink()).toBe(true);
+    expect(await service.status("pdf")).toMatchObject([
+      { name: "pdf", overall: "Synced", agents: { qoder: "linked" } }
+    ]);
+  });
+});
+
+describe("snapshots", () => {
+  it("restores central content and keeps Agent links working", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "pdf", "v1");
+    await f.service.add("pdf");
+    const snap = await f.service.snapshot("manual");
+
+    await writeFile(path.join(f.root, "skills", "pdf", "SKILL.md"), "v2");
+    expect(await readFile(path.join(f.codexRoot, "pdf", "SKILL.md"), "utf8")).toBe("v2");
+
+    await f.service.restoreSnapshot(snap.id);
+    expect(await readFile(path.join(f.root, "skills", "pdf", "SKILL.md"), "utf8")).toBe("v1");
+    expect(await readFile(path.join(f.codexRoot, "pdf", "SKILL.md"), "utf8")).toBe("v1");
+    expect((await lstat(path.join(f.codexRoot, "pdf"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("auto-snapshots before a sync", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "pdf", "v1");
+    await f.service.add("pdf");
+    await f.service.sync("pdf", "central");
+    const snapshots = await f.service.listSnapshots();
+    expect(snapshots.some((snapshot) => snapshot.label === "before-sync-pdf")).toBe(true);
+  });
+});
+
+describe("preview", () => {
+  it("returns SKILL.md text from the central copy and a specific Agent", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "pdf", "# PDF\nhello");
+    await f.service.add("pdf");
+    expect((await f.service.preview("pdf")).text).toContain("hello");
+    expect((await f.service.preview("pdf", "codex")).text).toContain("hello");
+  });
+});
+
+describe("delete unmanaged Skill", () => {
+  it("moves an unmanaged Skill to the trash", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "junk", "junk body");
+    await f.service.deleteSkill("codex", "junk");
+    await expect(lstat(path.join(f.codexRoot, "junk"))).rejects.toMatchObject({ code: "ENOENT" });
+    const trashed = await readdir(path.join(f.root, "trash"));
+    expect(trashed.some((entry) => entry.startsWith("codex__junk__"))).toBe(true);
+  });
+
+  it("refuses to delete a managed Skill", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "pdf", "# PDF");
+    await f.service.add("pdf");
+    await expect(f.service.deleteSkill("codex", "pdf")).rejects.toThrow(/managed/);
   });
 });
 

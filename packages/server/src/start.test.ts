@@ -10,6 +10,7 @@ const service: ApiService = {
   list: async () => [],
   status: async () => [],
   diff: async (name) => ({ name, text: "", truncated: false }),
+  preview: async (name) => ({ name, text: "", truncated: false }),
   add: async (name) => ({
     kind: "completed",
     name,
@@ -25,6 +26,9 @@ const service: ApiService = {
     name,
     agents: { codex: "symlink", claude: "symlink" }
   }),
+  enable: async (name) => ({ kind: "completed", name }),
+  disable: async (name) => ({ kind: "completed", name }),
+  deleteSkill: async (agent, name) => ({ kind: "completed", name, agent }),
   remove: async (name) => ({ kind: "completed", name })
 };
 

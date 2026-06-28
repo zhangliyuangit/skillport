@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readFile, readdir, rename, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, readlink, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { AgentAdapter, AgentEntry } from "./agents.js";
 import type { AgentId, ManagedSkill, SyncMode } from "./domain.js";
@@ -8,9 +8,11 @@ import { TransactionJournal } from "./executor.js";
 import { parseSkillName } from "./paths.js";
 import { parseGitHubSource } from "./paths.js";
 import type { AddCandidate, AddResult } from "./planner.js";
-import type { StateStore } from "./state-store.js";
+import type { SkillPortState, StateStore } from "./state-store.js";
 import { GitHubInstaller } from "./github.js";
 import { inspectSkillTree } from "./tree.js";
+import { readSkillContent, readSkillDescription } from "./manifest.js";
+import { SnapshotStore, type SnapshotInfo } from "./snapshots.js";
 
 export interface SkillPortServiceOptions {
   root: string;
@@ -29,21 +31,109 @@ export interface DiscoveredSkill {
   name: string;
   classification: "single-source" | "identical" | "conflict" | "managed" | "error";
   agents: AgentId[];
+  description?: string;
 }
 
 export interface SkillStatusReport {
   name: string;
   overall: "Synced" | "Local changes" | "Missing" | "Error";
   agents: Record<AgentId, string>;
+  description?: string;
 }
 
 export class SkillPortService {
   private readonly now: () => Date;
   private readonly githubInstaller: GitHubInstaller;
+  private readonly snapshots: SnapshotStore;
+  private agentAdapters: AgentAdapter[];
 
   constructor(private readonly options: SkillPortServiceOptions) {
     this.now = options.now ?? (() => new Date());
     this.githubInstaller = options.githubInstaller ?? new GitHubInstaller();
+    this.snapshots = new SnapshotStore(options.root, this.now);
+    this.agentAdapters = options.agents;
+  }
+
+  async snapshot(label?: string): Promise<SnapshotInfo> {
+    return this.options.stateStore.withLock(() => this.snapshots.create(label));
+  }
+
+  async listSnapshots(): Promise<SnapshotInfo[]> {
+    return this.snapshots.list();
+  }
+
+  /** Deletes the entire SkillPort home (central copies, state, snapshots, trash). */
+  async purge(): Promise<void> {
+    await rm(this.options.root, { recursive: true, force: true });
+  }
+
+  /**
+   * Restores central content and managed state from a snapshot, taking a fresh
+   * snapshot of the current state first, then re-aligning Agent links.
+   */
+  async restoreSnapshot(id: string): Promise<{ restored: string[] }> {
+    return this.options.stateStore.withLock(async () => {
+      if (!(await this.snapshots.exists(id))) throw new Error(`Snapshot not found: ${id}`);
+      await this.snapshots.create(`before-restore-${id}`);
+
+      const snapshotDir = this.snapshots.pathFor(id);
+      const central = path.join(this.options.root, "skills");
+      await rm(central, { recursive: true, force: true });
+      const snapshotSkills = path.join(snapshotDir, "skills");
+      if (await pathExists(snapshotSkills)) {
+        await cp(snapshotSkills, central, { recursive: true, dereference: false });
+      } else {
+        await mkdir(central, { recursive: true });
+      }
+
+      const snapshotState = path.join(snapshotDir, "state.json");
+      const stateDestination = path.join(this.options.root, "state.json");
+      if (await pathExists(snapshotState)) {
+        await cp(snapshotState, stateDestination);
+      } else {
+        await rm(stateDestination, { force: true });
+      }
+
+      const state = await this.options.stateStore.load();
+      await this.reconcileLinks(state);
+      return { restored: Object.keys(state.skills) };
+    });
+  }
+
+  private async reconcileLinks(state: SkillPortState): Promise<void> {
+    const centralRoot = path.resolve(this.options.root, "skills");
+    for (const agent of this.agentAdapters) {
+      const entries = await readdir(agent.root, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const target = agent.skillPath(entry.name);
+        const linkStat = await lstat(target).catch(() => undefined);
+        if (!linkStat?.isSymbolicLink()) continue;
+        const resolved = path.resolve(path.dirname(target), await readlink(target));
+        if (!resolved.startsWith(centralRoot + path.sep)) continue; // not one of ours
+        const managed = state.skills[entry.name];
+        const enabled = managed && !managed.disabled?.includes(agent.id);
+        if (!enabled || !(await pathExists(resolved))) {
+          await rm(target, { recursive: true, force: true });
+        }
+      }
+    }
+    for (const [name, managed] of Object.entries(state.skills)) {
+      for (const agent of this.enabledAgents(managed)) {
+        const canonical = this.canonicalPath(name);
+        const entry = await agent.inspect(name, canonical).catch(() => undefined);
+        if (!entry || entry.kind !== "missing") continue;
+        try {
+          await agent.installLink(name, canonical);
+        } catch {
+          await agent.installCopy(name, canonical);
+        }
+      }
+    }
+  }
+
+  /** Replace the live Agent list (used when agents are added/removed at runtime). */
+  setAgents(agents: AgentAdapter[]): void {
+    this.agentAdapters = agents;
   }
 
   async install(
@@ -92,14 +182,14 @@ export class SkillPortService {
       await mkdir(path.dirname(staged), { recursive: true });
       await cp(sourcePath, staged, { recursive: true, dereference: false });
       try {
-        for (const agent of this.options.agents) {
+        for (const agent of this.agentAdapters) {
           const entry = current.entries.get(agent.id)!;
           if (entry.kind === "local") await journal.backup(entry.path, agent.id);
         }
         await mkdir(path.dirname(canonical), { recursive: true });
         await rename(staged, canonical);
         const modes = {} as Record<AgentId, SyncMode>;
-        for (const agent of this.options.agents) {
+        for (const agent of this.agentAdapters) {
           journal.markInstalled(agent.skillPath(name));
           try {
             await agent.installLink(name, canonical);
@@ -160,7 +250,7 @@ export class SkillPortService {
       await cp(selected.path, staged, { recursive: true, dereference: false });
 
       try {
-        for (const agent of this.options.agents) {
+        for (const agent of this.agentAdapters) {
           const entry = current.entries.get(agent.id)!;
           if (entry.kind === "local") {
             await journal.backup(entry.path, agent.id);
@@ -171,7 +261,7 @@ export class SkillPortService {
         await rename(staged, canonical);
 
         const modes = {} as Record<AgentId, SyncMode>;
-        for (const agent of this.options.agents) {
+        for (const agent of this.agentAdapters) {
           journal.markInstalled(agent.skillPath(name));
           try {
             await agent.installLink(name, canonical);
@@ -206,7 +296,7 @@ export class SkillPortService {
   async scan(): Promise<DiscoveredSkill[]> {
     const state = await this.options.stateStore.load();
     const names = new Set<string>();
-    for (const agent of this.options.agents) {
+    for (const agent of this.agentAdapters) {
       const entries = await readdir(agent.root, { withFileTypes: true }).catch(
         (error: unknown) => {
           if (isNodeError(error) && error.code === "ENOENT") return [];
@@ -222,7 +312,7 @@ export class SkillPortService {
       const fingerprints = new Set<string>();
       let managed = Boolean(state.skills[name]);
       let errored = false;
-      for (const agent of this.options.agents) {
+      for (const agent of this.agentAdapters) {
         if (!(await hasSkillManifest(agent.skillPath(name)))) continue;
         let entry: AgentEntry;
         try {
@@ -240,6 +330,10 @@ export class SkillPortService {
         if (entry.kind === "managed-link") managed = true;
       }
       if (agents.length === 0) continue;
+      const firstAgent = this.agentAdapters.find((agent) => agents.includes(agent.id));
+      const description = firstAgent
+        ? await readSkillDescription(firstAgent.skillPath(name))
+        : undefined;
       discovered.push({
         name,
         classification: errored
@@ -251,7 +345,8 @@ export class SkillPortService {
               : fingerprints.size <= 1
                 ? "identical"
                 : "conflict",
-        agents
+        agents,
+        ...(description ? { description } : {})
       });
     }
     return discovered;
@@ -278,7 +373,11 @@ export class SkillPortService {
       const agentStates = {} as Record<AgentId, string>;
       let overall: SkillStatusReport["overall"] = canonicalInspection ? "Synced" : "Missing";
 
-      for (const agent of this.options.agents) {
+      for (const agent of this.agentAdapters) {
+        if (skill.disabled?.includes(agent.id)) {
+          agentStates[agent.id] = "disabled";
+          continue;
+        }
         let entry: AgentEntry | undefined;
         let inspectFailed = false;
         try {
@@ -306,23 +405,53 @@ export class SkillPortService {
           overall = "Error";
         }
       }
-      reports.push({ name: skill.name, overall, agents: agentStates });
+      const description = await readSkillDescription(canonical);
+      reports.push({
+        name: skill.name,
+        overall,
+        agents: agentStates,
+        ...(description ? { description } : {})
+      });
     }
     return reports;
+  }
+
+  /**
+   * Returns the SKILL.md text of a Skill for preview — from the central copy
+   * by default, or from a specific Agent's copy when `agentId` is given.
+   */
+  async preview(
+    nameValue: string,
+    agentId?: AgentId
+  ): Promise<{ name: string; text: string; truncated: boolean }> {
+    const name = parseSkillName(nameValue);
+    const root = agentId ? this.agentAdapter(agentId).skillPath(name) : this.canonicalPath(name);
+    const { text, truncated } = await readSkillContent(root);
+    return { name, text, truncated };
   }
 
   async diff(nameValue: string): Promise<SkillDiff> {
     const name = parseSkillName(nameValue);
     const entries = await Promise.all(
-      this.options.agents.map((agent) => agent.inspect(name, this.canonicalPath(name)))
+      this.agentAdapters.map((agent) => agent.inspect(name, this.canonicalPath(name)))
     );
-    const locals = entries.filter(
-      (entry): entry is Extract<AgentEntry, { kind: "local" }> => entry.kind === "local"
+    const locals = this.agentAdapters
+      .map((agent, index) => ({ agent: agent.id, entry: entries[index]! }))
+      .filter(
+        (candidate): candidate is { agent: AgentId; entry: Extract<AgentEntry, { kind: "local" }> } =>
+          candidate.entry.kind === "local"
+      );
+    if (locals.length < 2) throw new Error("Diff requires local copies in at least two Agents");
+    const [left, right] = locals;
+    const leftText = await readBoundedSkillFile(left!.entry.path);
+    const rightText = await readBoundedSkillFile(right!.entry.path);
+    return createTextDiff(
+      name,
+      `${left!.agent}/SKILL.md`,
+      leftText,
+      `${right!.agent}/SKILL.md`,
+      rightText
     );
-    if (locals.length !== 2) throw new Error("Diff requires local copies in both Agents");
-    const left = await readBoundedSkillFile(locals[0]!.path);
-    const right = await readBoundedSkillFile(locals[1]!.path);
-    return createTextDiff(name, "codex/SKILL.md", left, "claude/SKILL.md", right);
   }
 
   async sync(nameValue: string, source: AgentId | "central"): Promise<AddResult> {
@@ -331,20 +460,26 @@ export class SkillPortService {
       const state = await this.options.stateStore.load();
       const managed = state.skills[name];
       if (!managed) throw new Error(`Skill is not managed: ${name}`);
+      // sync overwrites copies with the chosen version; snapshot first so it is undoable.
+      await this.snapshots.create(`before-sync-${name}`);
       const canonical = this.canonicalPath(name);
       const operationRoot = path.join(this.options.root, ".operations", randomUUID());
       const staged = path.join(operationRoot, "staged");
       const sourcePath =
         source === "central"
           ? canonical
-          : this.options.agents.find((agent) => agent.id === source)?.skillPath(name);
+          : this.agentAdapters.find((agent) => agent.id === source)?.skillPath(name);
       if (!sourcePath) throw new Error(`Unknown sync source: ${source}`);
+      if (source !== "central" && managed.disabled?.includes(source)) {
+        throw new Error(`${source} is disabled for ${name}; enable it before syncing from it`);
+      }
       await cp(sourcePath, staged, { recursive: true, dereference: true });
       const fingerprint = (await inspectCanonical(staged))!.fingerprint;
+      const targets = this.enabledAgents(managed);
       const backups = new Map<string, string>();
       const installed: string[] = [];
       try {
-        for (const agent of this.options.agents) {
+        for (const agent of targets) {
           const destination = agent.skillPath(name);
           const backup = path.join(operationRoot, "backups", agent.id);
           await mkdir(path.dirname(backup), { recursive: true });
@@ -355,13 +490,32 @@ export class SkillPortService {
         await rename(canonical, canonicalBackup);
         backups.set(canonical, canonicalBackup);
         await rename(staged, canonical);
-        for (const agent of this.options.agents) {
+        const modes = {} as Record<AgentId, SyncMode>;
+        for (const id of managed.disabled ?? []) {
+          if (managed.agents[id]) modes[id] = managed.agents[id]!;
+        }
+        for (const agent of targets) {
           const destination = agent.skillPath(name);
           installed.push(destination);
-          if (managed.agents[agent.id] === "symlink") await agent.installLink(name, canonical);
-          else await agent.installCopy(name, canonical);
+          if (managed.agents[agent.id] === "copy") {
+            await agent.installCopy(name, canonical);
+            modes[agent.id] = "copy";
+          } else {
+            try {
+              await agent.installLink(name, canonical);
+              modes[agent.id] = "symlink";
+            } catch {
+              await agent.installCopy(name, canonical);
+              modes[agent.id] = "copy";
+            }
+          }
         }
-        const updated = { ...managed, fingerprint, updatedAt: this.now().toISOString() };
+        const updated = {
+          ...managed,
+          agents: modes,
+          fingerprint,
+          updatedAt: this.now().toISOString()
+        };
         await this.options.stateStore.save({
           schemaVersion: 1,
           skills: { ...state.skills, [name]: updated }
@@ -381,22 +535,233 @@ export class SkillPortService {
     });
   }
 
+  async disable(
+    nameValue: string,
+    agentId: AgentId
+  ): Promise<{ kind: "completed"; name: string }> {
+    const name = parseSkillName(nameValue);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      const managed = state.skills[name];
+      if (!managed) throw new Error(`Skill is not managed: ${name}`);
+      if (managed.disabled?.includes(agentId)) return { kind: "completed", name };
+      if (this.enabledAgents(managed).length <= 1) {
+        throw new Error(`Cannot disable the last active Agent for ${name}; use remove instead`);
+      }
+
+      const agent = this.agentAdapter(agentId);
+      const canonical = this.canonicalPath(name);
+      const entry = await agent.inspect(name, canonical);
+      if (entry.kind === "foreign-link") {
+        throw new Error(`Refusing to touch unrelated symbolic link: ${entry.path}`);
+      }
+      if (entry.kind === "local") {
+        const central = await inspectCanonical(canonical);
+        if (!central || central.fingerprint !== entry.fingerprint) {
+          throw new Error(`${agentId} has local changes; sync before disabling ${name}`);
+        }
+      }
+
+      const operationRoot = path.join(this.options.root, ".operations", randomUUID());
+      const backup = path.join(operationRoot, agentId);
+      await mkdir(operationRoot, { recursive: true });
+      if (entry.kind !== "missing") await rename(agent.skillPath(name), backup);
+      try {
+        await this.options.stateStore.save({
+          schemaVersion: 1,
+          skills: {
+            ...state.skills,
+            [name]: {
+              ...managed,
+              disabled: [...(managed.disabled ?? []), agentId],
+              updatedAt: this.now().toISOString()
+            }
+          }
+        });
+        await rm(operationRoot, { recursive: true, force: true });
+        return { kind: "completed", name };
+      } catch (error) {
+        if (entry.kind !== "missing") {
+          await rename(backup, agent.skillPath(name)).catch(() => undefined);
+        }
+        await rm(operationRoot, { recursive: true, force: true });
+        throw error;
+      }
+    });
+  }
+
+  async enable(
+    nameValue: string,
+    agentId: AgentId
+  ): Promise<{ kind: "completed"; name: string }> {
+    const name = parseSkillName(nameValue);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      const managed = state.skills[name];
+      if (!managed) throw new Error(`Skill is not managed: ${name}`);
+      if (!managed.disabled?.includes(agentId)) return { kind: "completed", name };
+
+      const agent = this.agentAdapter(agentId);
+      const canonical = this.canonicalPath(name);
+      const entry = await agent.inspect(name, canonical);
+      if (entry.kind !== "missing") {
+        throw new Error(`Refusing to overwrite existing path: ${agent.skillPath(name)}`);
+      }
+
+      let mode: SyncMode = managed.agents[agentId] ?? "symlink";
+      try {
+        await agent.installLink(name, canonical);
+        mode = "symlink";
+      } catch {
+        await agent.installCopy(name, canonical);
+        mode = "copy";
+      }
+      const remaining = (managed.disabled ?? []).filter((id) => id !== agentId);
+      await this.options.stateStore.save({
+        schemaVersion: 1,
+        skills: {
+          ...state.skills,
+          [name]: {
+            ...managed,
+            agents: { ...managed.agents, [agentId]: mode },
+            disabled: remaining.length ? remaining : undefined,
+            updatedAt: this.now().toISOString()
+          }
+        }
+      });
+      return { kind: "completed", name };
+    });
+  }
+
+  /**
+   * Installs every managed Skill into `agentId` from the central copy.
+   * Skips Skills the Agent already has, has its own version of, or has turned
+   * off — useful right after registering a new Agent.
+   */
+  async populate(
+    agentId: AgentId
+  ): Promise<{ installed: string[]; skipped: string[] }> {
+    const agent = this.agentAdapter(agentId);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      const skills: Record<string, ManagedSkill> = { ...state.skills };
+      const installed: string[] = [];
+      const skipped: string[] = [];
+      for (const [name, managed] of Object.entries(state.skills)) {
+        if (managed.disabled?.includes(agentId)) {
+          skipped.push(name);
+          continue;
+        }
+        const canonical = this.canonicalPath(name);
+        const central = await inspectCanonical(canonical);
+        if (!central) {
+          skipped.push(name);
+          continue;
+        }
+        let entry: AgentEntry;
+        try {
+          entry = await agent.inspect(name, canonical);
+        } catch {
+          skipped.push(name);
+          continue;
+        }
+        if (entry.kind === "managed-link") continue;
+        if (entry.kind === "foreign-link") {
+          skipped.push(name);
+          continue;
+        }
+        if (entry.kind === "local") {
+          if (entry.fingerprint === central.fingerprint) {
+            if (managed.agents[agentId] !== "copy") {
+              skills[name] = {
+                ...managed,
+                agents: { ...managed.agents, [agentId]: "copy" }
+              };
+            }
+            continue;
+          }
+          skipped.push(name);
+          continue;
+        }
+        let mode: SyncMode;
+        try {
+          await agent.installLink(name, canonical);
+          mode = "symlink";
+        } catch {
+          await agent.installCopy(name, canonical);
+          mode = "copy";
+        }
+        skills[name] = {
+          ...skills[name]!,
+          agents: { ...skills[name]!.agents, [agentId]: mode },
+          updatedAt: this.now().toISOString()
+        };
+        installed.push(name);
+      }
+      await this.options.stateStore.save({ schemaVersion: 1, skills });
+      return { installed, skipped };
+    });
+  }
+
+  /**
+   * Removes an unmanaged Skill from a single Agent by moving it into the
+   * SkillPort trash (recoverable). Refuses managed Skills and symbolic links.
+   */
+  async deleteSkill(
+    agentId: AgentId,
+    nameValue: string
+  ): Promise<{ kind: "completed"; name: string; agent: AgentId }> {
+    const name = parseSkillName(nameValue);
+    const agent = this.agentAdapter(agentId);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      if (state.skills[name]) {
+        throw new Error(`${name} is managed; use disable or remove instead of delete`);
+      }
+      const entry = await agent.inspect(name, this.canonicalPath(name));
+      if (entry.kind === "missing") {
+        throw new Error(`Skill not found in ${agentId}: ${name}`);
+      }
+      if (entry.kind === "managed-link" || entry.kind === "foreign-link") {
+        throw new Error(`Refusing to delete a symbolic link: ${entry.path}`);
+      }
+      const trash = path.join(this.options.root, "trash");
+      await mkdir(trash, { recursive: true });
+      const stamp = this.now().toISOString().replace(/[:.]/g, "-");
+      const destination = path.join(trash, `${agentId}__${name}__${stamp}`);
+      try {
+        await rename(entry.path, destination);
+      } catch (error) {
+        if (isNodeError(error) && error.code === "EXDEV") {
+          await cp(entry.path, destination, { recursive: true, dereference: false });
+          await rm(entry.path, { recursive: true, force: true });
+        } else {
+          throw error;
+        }
+      }
+      return { kind: "completed", name, agent: agentId };
+    });
+  }
+
   async remove(nameValue: string): Promise<{ kind: "completed"; name: string }> {
     const name = parseSkillName(nameValue);
     return this.options.stateStore.withLock(async () => {
       const state = await this.options.stateStore.load();
-      if (!state.skills[name]) throw new Error(`Skill is not managed: ${name}`);
+      const managed = state.skills[name];
+      if (!managed) throw new Error(`Skill is not managed: ${name}`);
       const canonical = this.canonicalPath(name);
+      // Disabled Agents have no link to leave behind; only restore active ones.
+      const targets = this.enabledAgents(managed);
       const operationRoot = path.join(this.options.root, ".operations", randomUUID());
       const stagedRoot = path.join(operationRoot, "staged");
       const backups = new Map<string, string>();
       const restored: string[] = [];
       await mkdir(stagedRoot, { recursive: true });
-      for (const agent of this.options.agents) {
+      for (const agent of targets) {
         await cp(canonical, path.join(stagedRoot, agent.id), { recursive: true });
       }
       try {
-        for (const agent of this.options.agents) {
+        for (const agent of targets) {
           const destination = agent.skillPath(name);
           const backup = path.join(operationRoot, "backups", agent.id);
           await mkdir(path.dirname(backup), { recursive: true });
@@ -429,13 +794,23 @@ export class SkillPortService {
     return path.join(this.options.root, "skills", name);
   }
 
+  private agentAdapter(agentId: AgentId): AgentAdapter {
+    const agent = this.agentAdapters.find((candidate) => candidate.id === agentId);
+    if (!agent) throw new Error(`Unknown Agent: ${agentId}`);
+    return agent;
+  }
+
+  private enabledAgents(managed: ManagedSkill): AgentAdapter[] {
+    return this.agentAdapters.filter((agent) => !managed.disabled?.includes(agent.id));
+  }
+
   private async inspectLocalCopies(
     name: string,
     canonical: string
   ): Promise<Inspection> {
     const candidates: AddCandidate[] = [];
     const entries = new Map<AgentId, AgentEntry>();
-    for (const agent of this.options.agents) {
+    for (const agent of this.agentAdapters) {
       const entry = await agent.inspect(name, canonical);
       entries.set(agent.id, entry);
       if (entry.kind === "foreign-link") {
@@ -483,6 +858,10 @@ async function readBoundedSkillFile(root: string): Promise<string> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  return stat(target).then(() => true).catch(() => false);
 }
 
 function chooseCandidate(

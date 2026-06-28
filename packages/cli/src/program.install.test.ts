@@ -22,8 +22,15 @@ it("passes a GitHub URL and subdirectory to install", async () => {
     diff: async () => ({ name: "", text: "", truncated: false }),
     status: async () => [],
     sync: async () => { throw new Error("unused"); },
+    enable: async () => ({ kind: "completed" as const, name: "" }),
+    disable: async () => ({ kind: "completed" as const, name: "" }),
+    deleteSkill: async (agent: string, name: string) => ({ kind: "completed" as const, name, agent }),
     remove: async () => ({ kind: "completed" as const, name: "" }),
-    list: async () => []
+    list: async () => [],
+    snapshot: async () => ({ id: "snap-1", createdAt: "snap-1" }),
+    listSnapshots: async () => [],
+    restoreSnapshot: async () => ({ restored: [] }),
+    purge: async () => undefined
   } satisfies CliService;
   const stdout = writer();
   const exitCode = await runCli(

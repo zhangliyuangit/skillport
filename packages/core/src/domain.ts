@@ -1,4 +1,8 @@
-export type AgentId = "codex" | "claude";
+/**
+ * Identifier for an Agent endpoint (e.g. "codex", "claude", "qoder").
+ * Built-in defaults are codex and claude; users can register more via config.
+ */
+export type AgentId = string;
 
 export type SyncMode = "symlink" | "copy";
 
@@ -19,6 +23,8 @@ export interface GitHubSource {
 export interface ManagedSkill {
   name: string;
   agents: Record<AgentId, SyncMode>;
+  /** Agents the Skill is managed for but currently turned off (link removed). */
+  disabled?: AgentId[] | undefined;
   fingerprint: string;
   source?: GitHubSource | undefined;
   updatedAt: string;

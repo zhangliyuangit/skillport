@@ -3,3 +3,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 work/
+
+# Local SkillPort home (state.json, config.json, central skills, snapshots,
+# trash) — never commit personal data, including when SKILLPORT_HOME points here.
+.skillport/
+
+# Editor / IDE settings
+.idea/
+*.tgz

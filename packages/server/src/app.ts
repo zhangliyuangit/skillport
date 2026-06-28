@@ -70,7 +70,11 @@ export function buildApp(options: {
   app.get("/api/skills", async () => {
     const [skills, statuses] = await Promise.all([service.list(), service.status()]);
     const statusByName = new Map(statuses.map((status) => [status.name, status]));
-    return skills.map((skill) => ({ ...skill, ...statusByName.get(skill.name) }));
+    return skills.map((skill) => ({
+      ...skill,
+      modes: skill.agents,
+      ...statusByName.get(skill.name)
+    }));
   });
 
   app.get("/api/discover", async () => service.scan());

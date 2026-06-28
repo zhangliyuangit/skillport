@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
+import fastifyStatic from "@fastify/static";
 import { buildApp, type ApiService } from "./app.js";
 
 export interface RunningServer {
@@ -12,6 +13,7 @@ export interface RunningServer {
 
 export async function startServer(options: {
   service: ApiService;
+  webRoot?: string;
   openBrowser?: (url: string) => Promise<void>;
 }): Promise<RunningServer> {
   const host = "127.0.0.1" as const;
@@ -22,6 +24,12 @@ export async function startServer(options: {
     token,
     origin: () => origin
   });
+  if (options.webRoot) {
+    await app.register(fastifyStatic, {
+      root: options.webRoot,
+      prefix: "/"
+    });
+  }
   await app.listen({ host, port: 0 });
   const address = app.server.address() as AddressInfo;
   origin = `http://${host}:${address.port}`;

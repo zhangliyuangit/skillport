@@ -81,7 +81,12 @@ describe("API resources", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual([
-      expect.objectContaining({ name: "pdf", overall: "Synced" })
+      expect.objectContaining({
+        name: "pdf",
+        modes: { codex: "symlink", claude: "symlink" },
+        agents: { codex: "linked", claude: "linked" },
+        overall: "Synced"
+      })
     ]);
     await app.close();
   });

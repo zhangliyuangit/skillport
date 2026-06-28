@@ -1,8 +1,8 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/main.ts"],
+  entry: ["src/index.ts"],
   format: ["esm"],
   clean: true,
-  noExternal: ["@skillport/core", "@skillport/server"]
+  noExternal: ["@skillport/core"]
 });

@@ -30,6 +30,7 @@ export interface CliDependencies {
   service: CliService;
   stdout: OutputWriter;
   stderr: OutputWriter;
+  startUi?: () => Promise<string>;
 }
 
 class InvalidInputError extends Error {}
@@ -118,6 +119,12 @@ export async function runCli(
 
   program.command("list").action(async () => {
     stdout.write(renderList(await service.list()));
+  });
+
+  program.command("ui").action(async () => {
+    if (!dependencies.startUi) throw new Error("管理页面启动器不可用");
+    const url = await dependencies.startUi();
+    stdout.write(`管理页面已打开：${url}\n`);
   });
 
   try {

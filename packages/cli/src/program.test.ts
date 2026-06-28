@@ -112,4 +112,21 @@ describe("runCli", () => {
     expect(exitCode).toBe(1);
     expect(stderr.text()).toContain("permission denied");
   });
+
+  it("starts the local management page", async () => {
+    let started = false;
+    const stdout = output();
+    const exitCode = await runCli(["ui"], {
+      service: fakeService(),
+      stdout,
+      stderr: output(),
+      startUi: async () => {
+        started = true;
+        return "http://127.0.0.1:43111/#token=test";
+      }
+    });
+    expect(exitCode).toBe(0);
+    expect(started).toBe(true);
+    expect(stdout.text()).toContain("管理页面已打开");
+  });
 });

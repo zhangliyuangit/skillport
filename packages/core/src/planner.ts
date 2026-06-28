@@ -9,7 +9,7 @@ export type AddResult =
   | {
       kind: "decision-required";
       name: string;
-      choices: AgentId[];
+      choices: Array<AgentId | "github">;
     };
 
 export interface AddCandidate {

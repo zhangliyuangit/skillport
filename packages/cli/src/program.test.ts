@@ -21,6 +21,11 @@ function fakeService(overrides: Partial<CliService> = {}): CliService {
       name,
       agents: { codex: "symlink", claude: "symlink" }
     }),
+    install: async (_url, _path, _from) => ({
+      kind: "completed",
+      name: "installed",
+      agents: { codex: "symlink", claude: "symlink" }
+    }),
     diff: async (name) => ({ name, text: "no difference", truncated: false }),
     status: async () => [],
     sync: async (name) => ({

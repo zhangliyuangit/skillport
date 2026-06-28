@@ -8,3 +8,4 @@ export * from "./agents.js";
 export * from "./planner.js";
 export * from "./service.js";
 export * from "./diff.js";
+export * from "./github.js";

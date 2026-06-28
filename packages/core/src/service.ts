@@ -6,14 +6,18 @@ import type { AgentId, ManagedSkill, SyncMode } from "./domain.js";
 import { createTextDiff, type SkillDiff } from "./diff.js";
 import { TransactionJournal } from "./executor.js";
 import { parseSkillName } from "./paths.js";
+import { parseGitHubSource } from "./paths.js";
 import type { AddCandidate, AddResult } from "./planner.js";
 import type { StateStore } from "./state-store.js";
+import { GitHubInstaller } from "./github.js";
+import { inspectSkillTree } from "./tree.js";
 
 export interface SkillPortServiceOptions {
   root: string;
   agents: AgentAdapter[];
   stateStore: StateStore;
   now?: () => Date;
+  githubInstaller?: GitHubInstaller;
 }
 
 interface Inspection {
@@ -35,9 +39,98 @@ export interface SkillStatusReport {
 
 export class SkillPortService {
   private readonly now: () => Date;
+  private readonly githubInstaller: GitHubInstaller;
 
   constructor(private readonly options: SkillPortServiceOptions) {
     this.now = options.now ?? (() => new Date());
+    this.githubInstaller = options.githubInstaller ?? new GitHubInstaller();
+  }
+
+  async install(
+    url: string,
+    subpath?: string,
+    from?: AgentId | "github"
+  ): Promise<AddResult> {
+    const source = parseGitHubSource(url, subpath);
+    const downloaded = await this.githubInstaller.download(source);
+    const name = parseSkillName(path.basename(subpath ?? source.repo));
+    try {
+      const external = await inspectSkillTree(downloaded.path);
+      const canonical = this.canonicalPath(name);
+      const inspection = await this.inspectLocalCopies(name, canonical);
+      const differing = inspection.candidates.filter(
+        (candidate) => candidate.fingerprint !== external.fingerprint
+      );
+      if (from && from !== "github") return this.add(name, from);
+      if (differing.length > 0 && !from) {
+        return {
+          kind: "decision-required",
+          name,
+          choices: ["github", ...inspection.candidates.map((candidate) => candidate.agent)]
+        };
+      }
+      return await this.installDownloaded(name, downloaded.path, source, external.fingerprint);
+    } finally {
+      await downloaded.cleanup();
+    }
+  }
+
+  private async installDownloaded(
+    name: string,
+    sourcePath: string,
+    source: import("./domain.js").GitHubSource,
+    fingerprint: string
+  ): Promise<AddResult> {
+    const canonical = this.canonicalPath(name);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      if (state.skills[name]) throw new Error(`Skill is already managed: ${name}`);
+      const current = await this.inspectLocalCopies(name, canonical);
+      const operationRoot = path.join(this.options.root, ".operations", randomUUID());
+      const staged = path.join(operationRoot, "staged", name);
+      const journal = new TransactionJournal(operationRoot);
+      await mkdir(path.dirname(staged), { recursive: true });
+      await cp(sourcePath, staged, { recursive: true, dereference: false });
+      try {
+        for (const agent of this.options.agents) {
+          const entry = current.entries.get(agent.id)!;
+          if (entry.kind === "local") await journal.backup(entry.path, agent.id);
+        }
+        await mkdir(path.dirname(canonical), { recursive: true });
+        await rename(staged, canonical);
+        const modes = {} as Record<AgentId, SyncMode>;
+        for (const agent of this.options.agents) {
+          journal.markInstalled(agent.skillPath(name));
+          try {
+            await agent.installLink(name, canonical);
+            modes[agent.id] = "symlink";
+          } catch {
+            await agent.installCopy(name, canonical);
+            modes[agent.id] = "copy";
+          }
+        }
+        await this.options.stateStore.save({
+          schemaVersion: 1,
+          skills: {
+            ...state.skills,
+            [name]: {
+              name,
+              agents: modes,
+              fingerprint,
+              source,
+              updatedAt: this.now().toISOString()
+            }
+          }
+        });
+        await journal.commit();
+        return { kind: "completed", name, agents: modes };
+      } catch (error) {
+        await journal.rollback(canonical);
+        throw error;
+      } finally {
+        await rm(operationRoot, { recursive: true, force: true });
+      }
+    });
   }
 
   async add(nameValue: string, from?: AgentId): Promise<AddResult> {
@@ -336,7 +429,6 @@ export class SkillPortService {
 }
 
 async function inspectCanonical(pathname: string) {
-  const { inspectSkillTree } = await import("./tree.js");
   return inspectSkillTree(pathname).catch((error: unknown) => {
     if (isNodeError(error) && error.code === "ENOENT") return undefined;
     if (error instanceof Error && error.message.includes("regular SKILL.md")) return undefined;
@@ -364,7 +456,7 @@ function chooseCandidate(
   | {
       kind: "decision-required";
       name: string;
-      choices: AgentId[];
+      choices: Array<AgentId | "github">;
     } {
   if (candidates.length === 0) throw new Error(`Skill not found: ${name}`);
 

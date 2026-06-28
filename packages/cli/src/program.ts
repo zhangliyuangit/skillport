@@ -18,6 +18,7 @@ import {
 export interface CliService {
   scan(): Promise<DiscoveredSkill[]>;
   add(name: string, from?: AgentId): Promise<AddResult>;
+  install(url: string, subpath?: string, from?: AgentId | "github"): Promise<AddResult>;
   diff(name: string): Promise<SkillDiff>;
   status(name?: string): Promise<SkillStatusReport[]>;
   sync(name: string, source: AgentId | "central"): Promise<AddResult>;
@@ -68,6 +69,28 @@ export async function runCli(
   program.command("diff").argument("<skill>").action(async (skill: string) => {
     stdout.write(`${(await service.diff(skill)).text}\n`);
   });
+
+  program
+    .command("install")
+    .argument("<github-url>")
+    .option("--path <subdirectory>")
+    .option("--from <source>")
+    .action(
+      async (
+        url: string,
+        options: { path?: string; from?: string }
+      ) => {
+        const source = options.from
+          ? options.from === "github"
+            ? "github"
+            : parseAgent(options.from)
+          : undefined;
+        const result = await service.install(url, options.path, source);
+        const rendered = renderAdd(result);
+        stdout.write(rendered.text);
+        exitCode = rendered.exitCode;
+      }
+    );
 
   program
     .command("status")

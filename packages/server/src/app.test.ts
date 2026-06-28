@@ -1,0 +1,146 @@
+import type { AddResult } from "@skillport/core";
+import { describe, expect, it } from "vitest";
+import { buildApp, type ApiService } from "./app.js";
+
+const token = "test-token";
+const origin = "http://127.0.0.1:43111";
+
+function service(overrides: Partial<ApiService> = {}): ApiService {
+  return {
+    scan: async () => [],
+    list: async () => [],
+    status: async () => [],
+    diff: async (name) => ({ name, text: "diff", truncated: false }),
+    add: async (name) => completed(name),
+    install: async () => completed("installed"),
+    sync: async (name) => completed(name),
+    remove: async (name) => ({ kind: "completed", name }),
+    ...overrides
+  };
+}
+
+function completed(name: string): AddResult {
+  return {
+    kind: "completed",
+    name,
+    agents: { codex: "symlink", claude: "symlink" }
+  };
+}
+
+function requestHeaders() {
+  return { origin, "x-skillport-token": token };
+}
+
+describe("API protection", () => {
+  it("rejects a missing token", async () => {
+    const app = buildApp({ service: service(), token, origin });
+    const response = await app.inject({ method: "GET", url: "/api/skills" });
+    expect(response.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("rejects a foreign origin", async () => {
+    const app = buildApp({ service: service(), token, origin });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/skills",
+      headers: { origin: "https://evil.example", "x-skillport-token": token }
+    });
+    expect(response.statusCode).toBe(403);
+    await app.close();
+  });
+});
+
+describe("API resources", () => {
+  it("combines managed inventory with live status", async () => {
+    const app = buildApp({
+      token,
+      origin,
+      service: service({
+        list: async () => [
+          {
+            name: "pdf",
+            agents: { codex: "symlink", claude: "symlink" },
+            fingerprint: "abc",
+            updatedAt: "2026-06-28T00:00:00.000Z"
+          }
+        ],
+        status: async () => [
+          {
+            name: "pdf",
+            overall: "Synced",
+            agents: { codex: "linked", claude: "linked" }
+          }
+        ]
+      })
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/skills",
+      headers: requestHeaders()
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual([
+      expect.objectContaining({ name: "pdf", overall: "Synced" })
+    ]);
+    await app.close();
+  });
+
+  it("returns 409 with explicit choices for conflicts", async () => {
+    const app = buildApp({
+      token,
+      origin,
+      service: service({
+        add: async () => ({
+          kind: "decision-required",
+          name: "review",
+          choices: ["codex", "claude"]
+        })
+      })
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/skills/review/add",
+      headers: requestHeaders(),
+      payload: {}
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      code: "SOURCE_DECISION_REQUIRED",
+      choices: ["codex", "claude"]
+    });
+    await app.close();
+  });
+
+  it("validates install input", async () => {
+    const app = buildApp({ service: service(), token, origin });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/install",
+      headers: requestHeaders(),
+      payload: { url: "not a URL" }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: "INVALID_INPUT" });
+    await app.close();
+  });
+
+  it("maps unexpected errors to a stable response", async () => {
+    const app = buildApp({
+      token,
+      origin,
+      service: service({ remove: async () => { throw new Error("permission denied"); } })
+    });
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/api/skills/pdf",
+      headers: requestHeaders()
+    });
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      code: "OPERATION_FAILED",
+      message: "permission denied"
+    });
+    await app.close();
+  });
+});

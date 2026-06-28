@@ -7,3 +7,4 @@ export * from "./state-store.js";
 export * from "./agents.js";
 export * from "./planner.js";
 export * from "./service.js";
+export * from "./diff.js";

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, rename, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type { AgentAdapter, AgentEntry } from "./agents.js";
 import type { AgentId, ManagedSkill, SyncMode } from "./domain.js";
+import { createTextDiff, type SkillDiff } from "./diff.js";
 import { TransactionJournal } from "./executor.js";
 import { parseSkillName } from "./paths.js";
 import type { AddCandidate, AddResult } from "./planner.js";
@@ -18,6 +19,18 @@ export interface SkillPortServiceOptions {
 interface Inspection {
   candidates: AddCandidate[];
   entries: Map<AgentId, AgentEntry>;
+}
+
+export interface DiscoveredSkill {
+  name: string;
+  classification: "single-source" | "identical" | "conflict" | "managed";
+  agents: AgentId[];
+}
+
+export interface SkillStatusReport {
+  name: string;
+  overall: "Synced" | "Local changes" | "Missing" | "Error";
+  agents: Record<AgentId, string>;
 }
 
 export class SkillPortService {
@@ -97,6 +110,204 @@ export class SkillPortService {
     });
   }
 
+  async scan(): Promise<DiscoveredSkill[]> {
+    const state = await this.options.stateStore.load();
+    const names = new Set<string>();
+    for (const agent of this.options.agents) {
+      const entries = await readdir(agent.root, { withFileTypes: true }).catch(
+        (error: unknown) => {
+          if (isNodeError(error) && error.code === "ENOENT") return [];
+          throw error;
+        }
+      );
+      for (const entry of entries) names.add(entry.name);
+    }
+
+    const discovered: DiscoveredSkill[] = [];
+    for (const name of [...names].sort((a, b) => a.localeCompare(b))) {
+      const agents: AgentId[] = [];
+      const fingerprints = new Set<string>();
+      let managed = Boolean(state.skills[name]);
+      for (const agent of this.options.agents) {
+        const entry = await agent.inspect(name, this.canonicalPath(name));
+        if (entry.kind !== "missing") agents.push(agent.id);
+        if (entry.kind === "local") fingerprints.add(entry.fingerprint);
+        if (entry.kind === "managed-link") managed = true;
+      }
+      discovered.push({
+        name,
+        classification: managed
+          ? "managed"
+          : agents.length === 1
+            ? "single-source"
+            : fingerprints.size <= 1
+              ? "identical"
+              : "conflict",
+        agents
+      });
+    }
+    return discovered;
+  }
+
+  async list(): Promise<ManagedSkill[]> {
+    const state = await this.options.stateStore.load();
+    return Object.values(state.skills).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async status(nameValue?: string): Promise<SkillStatusReport[]> {
+    const state = await this.options.stateStore.load();
+    const skills = nameValue
+      ? [state.skills[parseSkillName(nameValue)]].filter(
+          (skill): skill is ManagedSkill => Boolean(skill)
+        )
+      : Object.values(state.skills);
+    if (nameValue && skills.length === 0) throw new Error(`Skill is not managed: ${nameValue}`);
+
+    const reports: SkillStatusReport[] = [];
+    for (const skill of skills.sort((a, b) => a.name.localeCompare(b.name))) {
+      const canonical = this.canonicalPath(skill.name);
+      const canonicalInspection = await inspectCanonical(canonical);
+      const agentStates = {} as Record<AgentId, string>;
+      let overall: SkillStatusReport["overall"] = canonicalInspection ? "Synced" : "Missing";
+
+      for (const agent of this.options.agents) {
+        const entry = await agent.inspect(skill.name, canonical).catch(() => undefined);
+        if (!entry || entry.kind === "missing") {
+          agentStates[agent.id] = "missing";
+          overall = "Missing";
+        } else if (entry.kind === "managed-link") {
+          agentStates[agent.id] = "linked";
+        } else if (entry.kind === "local") {
+          const expected = canonicalInspection?.fingerprint;
+          if (entry.fingerprint === expected) agentStates[agent.id] = "copied";
+          else {
+            agentStates[agent.id] = "local changes";
+            if (overall !== "Missing") overall = "Local changes";
+          }
+        } else {
+          agentStates[agent.id] = "foreign link";
+          overall = "Error";
+        }
+      }
+      reports.push({ name: skill.name, overall, agents: agentStates });
+    }
+    return reports;
+  }
+
+  async diff(nameValue: string): Promise<SkillDiff> {
+    const name = parseSkillName(nameValue);
+    const entries = await Promise.all(
+      this.options.agents.map((agent) => agent.inspect(name, this.canonicalPath(name)))
+    );
+    const locals = entries.filter(
+      (entry): entry is Extract<AgentEntry, { kind: "local" }> => entry.kind === "local"
+    );
+    if (locals.length !== 2) throw new Error("Diff requires local copies in both Agents");
+    const left = await readBoundedSkillFile(locals[0]!.path);
+    const right = await readBoundedSkillFile(locals[1]!.path);
+    return createTextDiff(name, "codex/SKILL.md", left, "claude/SKILL.md", right);
+  }
+
+  async sync(nameValue: string, source: AgentId | "central"): Promise<AddResult> {
+    const name = parseSkillName(nameValue);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      const managed = state.skills[name];
+      if (!managed) throw new Error(`Skill is not managed: ${name}`);
+      const canonical = this.canonicalPath(name);
+      const operationRoot = path.join(this.options.root, ".operations", randomUUID());
+      const staged = path.join(operationRoot, "staged");
+      const sourcePath =
+        source === "central"
+          ? canonical
+          : this.options.agents.find((agent) => agent.id === source)?.skillPath(name);
+      if (!sourcePath) throw new Error(`Unknown sync source: ${source}`);
+      await cp(sourcePath, staged, { recursive: true, dereference: true });
+      const fingerprint = (await inspectCanonical(staged))!.fingerprint;
+      const backups = new Map<string, string>();
+      const installed: string[] = [];
+      try {
+        for (const agent of this.options.agents) {
+          const destination = agent.skillPath(name);
+          const backup = path.join(operationRoot, "backups", agent.id);
+          await mkdir(path.dirname(backup), { recursive: true });
+          await rename(destination, backup);
+          backups.set(destination, backup);
+        }
+        const canonicalBackup = path.join(operationRoot, "backups", "canonical");
+        await rename(canonical, canonicalBackup);
+        backups.set(canonical, canonicalBackup);
+        await rename(staged, canonical);
+        for (const agent of this.options.agents) {
+          const destination = agent.skillPath(name);
+          installed.push(destination);
+          if (managed.agents[agent.id] === "symlink") await agent.installLink(name, canonical);
+          else await agent.installCopy(name, canonical);
+        }
+        const updated = { ...managed, fingerprint, updatedAt: this.now().toISOString() };
+        await this.options.stateStore.save({
+          schemaVersion: 1,
+          skills: { ...state.skills, [name]: updated }
+        });
+        await rm(operationRoot, { recursive: true, force: true });
+        return { kind: "completed", name, agents: managed.agents };
+      } catch (error) {
+        for (const destination of installed) await rm(destination, { recursive: true, force: true });
+        await rm(canonical, { recursive: true, force: true });
+        for (const [destination, backup] of [...backups].reverse()) {
+          await mkdir(path.dirname(destination), { recursive: true });
+          await rename(backup, destination).catch(() => undefined);
+        }
+        await rm(operationRoot, { recursive: true, force: true });
+        throw error;
+      }
+    });
+  }
+
+  async remove(nameValue: string): Promise<{ kind: "completed"; name: string }> {
+    const name = parseSkillName(nameValue);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      if (!state.skills[name]) throw new Error(`Skill is not managed: ${name}`);
+      const canonical = this.canonicalPath(name);
+      const operationRoot = path.join(this.options.root, ".operations", randomUUID());
+      const stagedRoot = path.join(operationRoot, "staged");
+      const backups = new Map<string, string>();
+      const restored: string[] = [];
+      await mkdir(stagedRoot, { recursive: true });
+      for (const agent of this.options.agents) {
+        await cp(canonical, path.join(stagedRoot, agent.id), { recursive: true });
+      }
+      try {
+        for (const agent of this.options.agents) {
+          const destination = agent.skillPath(name);
+          const backup = path.join(operationRoot, "backups", agent.id);
+          await mkdir(path.dirname(backup), { recursive: true });
+          await rename(destination, backup);
+          backups.set(destination, backup);
+          await rename(path.join(stagedRoot, agent.id), destination);
+          restored.push(destination);
+        }
+        const canonicalBackup = path.join(operationRoot, "backups", "canonical");
+        await rename(canonical, canonicalBackup);
+        backups.set(canonical, canonicalBackup);
+        const { [name]: removed, ...remaining } = state.skills;
+        void removed;
+        await this.options.stateStore.save({ schemaVersion: 1, skills: remaining });
+        await rm(operationRoot, { recursive: true, force: true });
+        return { kind: "completed", name };
+      } catch (error) {
+        for (const destination of restored) await rm(destination, { recursive: true, force: true });
+        for (const [destination, backup] of [...backups].reverse()) {
+          await mkdir(path.dirname(destination), { recursive: true });
+          await rename(backup, destination).catch(() => undefined);
+        }
+        await rm(operationRoot, { recursive: true, force: true });
+        throw error;
+      }
+    });
+  }
+
   private canonicalPath(name: string): string {
     return path.join(this.options.root, "skills", name);
   }
@@ -122,6 +333,26 @@ export class SkillPortService {
     }
     return { candidates, entries };
   }
+}
+
+async function inspectCanonical(pathname: string) {
+  const { inspectSkillTree } = await import("./tree.js");
+  return inspectSkillTree(pathname).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") return undefined;
+    if (error instanceof Error && error.message.includes("regular SKILL.md")) return undefined;
+    throw error;
+  });
+}
+
+async function readBoundedSkillFile(root: string): Promise<string> {
+  const contents = await readFile(path.join(root, "SKILL.md"));
+  if (contents.byteLength > 200 * 1024) throw new Error("SKILL.md is too large to diff");
+  if (contents.includes(0)) throw new Error("SKILL.md appears to be binary");
+  return contents.toString("utf8");
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function chooseCandidate(

@@ -2,6 +2,9 @@
   "name": "skillport-workspace",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "npm run build -w packages/web && npm run build -w packages/server && npm run build -w packages/cli",

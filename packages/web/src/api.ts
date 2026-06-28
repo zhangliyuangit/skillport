@@ -12,7 +12,7 @@ export interface SkillSummary {
 
 export interface DiscoveredSkill {
   name: string;
-  classification: "single-source" | "identical" | "conflict" | "managed";
+  classification: "single-source" | "identical" | "conflict" | "managed" | "error";
   agents: AgentId[];
 }
 

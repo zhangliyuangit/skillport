@@ -4,3 +4,4 @@ export * from "./domain.js";
 export * from "./paths.js";
 export * from "./tree.js";
 export * from "./state-store.js";
+export * from "./agents.js";

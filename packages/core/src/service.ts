@@ -27,7 +27,7 @@ interface Inspection {
 
 export interface DiscoveredSkill {
   name: string;
-  classification: "single-source" | "identical" | "conflict" | "managed";
+  classification: "single-source" | "identical" | "conflict" | "managed" | "error";
   agents: AgentId[];
 }
 
@@ -221,9 +221,20 @@ export class SkillPortService {
       const agents: AgentId[] = [];
       const fingerprints = new Set<string>();
       let managed = Boolean(state.skills[name]);
+      let errored = false;
       for (const agent of this.options.agents) {
         if (!(await hasSkillManifest(agent.skillPath(name)))) continue;
-        const entry = await agent.inspect(name, this.canonicalPath(name));
+        let entry: AgentEntry;
+        try {
+          entry = await agent.inspect(name, this.canonicalPath(name));
+        } catch {
+          // A Skill we cannot inspect (e.g. it bundles a symbolic link such as
+          // a .venv) must not abort discovery of every other Skill. Surface it
+          // as an errored entry and keep scanning.
+          agents.push(agent.id);
+          errored = true;
+          continue;
+        }
         if (entry.kind !== "missing") agents.push(agent.id);
         if (entry.kind === "local") fingerprints.add(entry.fingerprint);
         if (entry.kind === "managed-link") managed = true;
@@ -231,13 +242,15 @@ export class SkillPortService {
       if (agents.length === 0) continue;
       discovered.push({
         name,
-        classification: managed
-          ? "managed"
-          : agents.length === 1
-            ? "single-source"
-            : fingerprints.size <= 1
-              ? "identical"
-              : "conflict",
+        classification: errored
+          ? "error"
+          : managed
+            ? "managed"
+            : agents.length === 1
+              ? "single-source"
+              : fingerprints.size <= 1
+                ? "identical"
+                : "conflict",
         agents
       });
     }
@@ -266,8 +279,17 @@ export class SkillPortService {
       let overall: SkillStatusReport["overall"] = canonicalInspection ? "Synced" : "Missing";
 
       for (const agent of this.options.agents) {
-        const entry = await agent.inspect(skill.name, canonical).catch(() => undefined);
-        if (!entry || entry.kind === "missing") {
+        let entry: AgentEntry | undefined;
+        let inspectFailed = false;
+        try {
+          entry = await agent.inspect(skill.name, canonical);
+        } catch {
+          inspectFailed = true;
+        }
+        if (inspectFailed) {
+          agentStates[agent.id] = "error";
+          overall = "Error";
+        } else if (!entry || entry.kind === "missing") {
           agentStates[agent.id] = "missing";
           overall = "Missing";
         } else if (entry.kind === "managed-link") {

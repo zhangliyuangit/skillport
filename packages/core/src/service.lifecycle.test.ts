@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   stat,
+  symlink,
   writeFile
 } from "node:fs/promises";
 import os from "node:os";
@@ -73,6 +74,19 @@ describe("scan", () => {
         classification: "single-source",
         agents: ["codex"]
       }
+    ]);
+  });
+
+  it("flags a Skill with a symbolic link without hiding the others", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "good", "ok");
+    await skill(f.codexRoot, "pyskill", "py");
+    await mkdir(path.join(f.codexRoot, "pyskill", "vendor"), { recursive: true });
+    await symlink("/usr/bin/true", path.join(f.codexRoot, "pyskill", "vendor", "link"));
+
+    expect(await f.service.scan()).toEqual([
+      { name: "good", classification: "single-source", agents: ["codex"] },
+      { name: "pyskill", classification: "error", agents: ["codex"] }
     ]);
   });
 });

@@ -11,9 +11,13 @@ function service(overrides: Partial<ApiService> = {}): ApiService {
     list: async () => [],
     status: async () => [],
     diff: async (name) => ({ name, text: "diff", truncated: false }),
+    preview: async (name) => ({ name, text: "body", truncated: false }),
     add: async (name) => completed(name),
     install: async () => completed("installed"),
     sync: async (name) => completed(name),
+    enable: async (name) => ({ kind: "completed", name }),
+    disable: async (name) => ({ kind: "completed", name }),
+    deleteSkill: async (agent, name) => ({ kind: "completed", name, agent }),
     remove: async (name) => ({ kind: "completed", name }),
     ...overrides
   };
@@ -146,6 +150,81 @@ describe("API resources", () => {
       code: "OPERATION_FAILED",
       message: "permission denied"
     });
+    await app.close();
+  });
+});
+
+describe("Skill deletion", () => {
+  it("deletes a Skill from an Agent", async () => {
+    const calls: Array<[string, string]> = [];
+    const app = buildApp({
+      token,
+      origin,
+      service: service({
+        deleteSkill: async (agent, name) => {
+          calls.push([agent, name]);
+          return { kind: "completed", name, agent };
+        }
+      })
+    });
+    const response = await app.inject({
+      method: "DELETE",
+      url: "/api/agents/qoder/skills/junk",
+      headers: requestHeaders()
+    });
+    expect(response.statusCode).toBe(200);
+    expect(calls).toEqual([["qoder", "junk"]]);
+    await app.close();
+  });
+});
+
+describe("Agent administration", () => {
+  it("lists, adds, and populates Agents", async () => {
+    const calls: string[] = [];
+    const agents = {
+      list: async () => [
+        { id: "codex", root: "/c" },
+        { id: "qoder", root: "/q" }
+      ],
+      add: async (id: string, root: string) => {
+        calls.push(`add:${id}:${root}`);
+        return [];
+      },
+      remove: async (id: string) => {
+        calls.push(`remove:${id}`);
+        return [];
+      },
+      populate: async (id: string) => {
+        calls.push(`populate:${id}`);
+        return { installed: ["pdf"], skipped: [] };
+      }
+    };
+    const app = buildApp({ service: service(), token, origin, agents });
+
+    const listed = await app.inject({ method: "GET", url: "/api/agents", headers: requestHeaders() });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toEqual([
+      { id: "codex", root: "/c" },
+      { id: "qoder", root: "/q" }
+    ]);
+
+    const added = await app.inject({
+      method: "POST",
+      url: "/api/agents",
+      headers: requestHeaders(),
+      payload: { id: "qoder", root: "/q" }
+    });
+    expect(added.statusCode).toBe(200);
+    expect(calls).toContain("add:qoder:/q");
+
+    const populated = await app.inject({
+      method: "POST",
+      url: "/api/agents/qoder/populate",
+      headers: requestHeaders()
+    });
+    expect(populated.statusCode).toBe(200);
+    expect(populated.json()).toEqual({ installed: ["pdf"], skipped: [] });
+
     await app.close();
   });
 });

@@ -13,13 +13,13 @@ export type SkillStatus =
 export interface GitHubSource {
   owner: string;
   repo: string;
-  path?: string;
+  path?: string | undefined;
 }
 
 export interface ManagedSkill {
   name: string;
   agents: Record<AgentId, SyncMode>;
   fingerprint: string;
-  source?: GitHubSource;
+  source?: GitHubSource | undefined;
   updatedAt: string;
 }

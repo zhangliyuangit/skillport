@@ -92,6 +92,14 @@ describe("SkillPort app", () => {
     expect(target.add).toHaveBeenCalledWith("work-report", "codex");
   });
 
+  it("opens the command palette with ⌘K", async () => {
+    const user = userEvent.setup();
+    render(<App api={api()} />);
+    await screen.findByRole("heading", { name: "技能" });
+    await user.keyboard("{Meta>}k{/Meta}");
+    expect(await screen.findByLabelText("命令面板")).toBeVisible();
+  });
+
   it("creates a new Skill through the dialog", async () => {
     const user = userEvent.setup();
     const target = api();

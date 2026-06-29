@@ -6,7 +6,7 @@ import { GithubLogo } from "@phosphor-icons/react/GithubLogo";
 import { MagnifyingGlass } from "@phosphor-icons/react/MagnifyingGlass";
 import { WarningCircle } from "@phosphor-icons/react/WarningCircle";
 import { X } from "@phosphor-icons/react/X";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentConfig, SkillContent, SkillDiff, SkillPortApi, SkillSummary } from "../../api.js";
 import { usePolling } from "../../hooks.js";
 import { SkillContentView } from "../../SkillContentView.js";
@@ -15,11 +15,13 @@ import { useToast } from "../toast/Toast.js";
 export function SkillsPage({
   api,
   onInstall,
-  onNewSkill
+  onNewSkill,
+  focusName
 }: {
   api: SkillPortApi;
   onInstall(): void;
   onNewSkill(): void;
+  focusName?: string | undefined;
 }) {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [agents, setAgents] = useState<AgentConfig[]>([]);
@@ -47,6 +49,17 @@ export function SkillsPage({
 
   useEffect(() => { void load(); }, []);
   usePolling(() => { if (!pending && !selected) void load(); }, 5000);
+
+  // Open the inspector for a Skill chosen from the command palette.
+  const focusedRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!focusName || focusName === focusedRef.current) return;
+    const found = skills.find((skill) => skill.name === focusName);
+    if (found) {
+      focusedRef.current = focusName;
+      void select(found);
+    }
+  }, [focusName, skills]);
 
   const filtered = useMemo(
     () => skills.filter((skill) => skill.name.toLowerCase().includes(query.toLowerCase())),

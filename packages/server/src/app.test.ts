@@ -23,6 +23,13 @@ function service(overrides: Partial<ApiService> = {}): ApiService {
     remove: async (name) => ({ kind: "completed", name }),
     doctor: async () => [],
     repair: async () => ({ fixed: 0, remaining: [] }),
+    listSnapshots: async () => [],
+    snapshot: async (label) => ({
+      id: "2026-01-01T00-00-00-000Z",
+      createdAt: "2026-01-01T00-00-00-000Z",
+      ...(label ? { label } : {})
+    }),
+    restoreSnapshot: async () => ({ restored: [] }),
     ...overrides
   };
 }
@@ -228,6 +235,48 @@ describe("Agent administration", () => {
     });
     expect(populated.statusCode).toBe(200);
     expect(populated.json()).toEqual({ installed: ["pdf"], skipped: [] });
+
+    await app.close();
+  });
+});
+
+describe("Snapshots", () => {
+  it("lists, creates, and restores snapshots", async () => {
+    const calls: string[] = [];
+    const app = buildApp({
+      service: service({
+        listSnapshots: async () => [
+          { id: "2026-06-29T10-00-00-000Z", createdAt: "2026-06-29T10-00-00-000Z", label: "before-sync-pdf" }
+        ],
+        snapshot: async (label) => {
+          calls.push(`snapshot:${label ?? ""}`);
+          return { id: "2026-06-29T12-00-00-000Z", createdAt: "2026-06-29T12-00-00-000Z" };
+        },
+        restoreSnapshot: async (id) => {
+          calls.push(`restore:${id}`);
+          return { restored: ["pdf"] };
+        }
+      }),
+      token,
+      origin
+    });
+
+    const listed = await app.inject({ method: "GET", url: "/api/snapshots", headers: requestHeaders() });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toHaveLength(1);
+
+    const created = await app.inject({ method: "POST", url: "/api/snapshots", headers: requestHeaders() });
+    expect(created.statusCode).toBe(200);
+    expect(calls).toContain("snapshot:");
+
+    const restored = await app.inject({
+      method: "POST",
+      url: "/api/snapshots/2026-06-29T10-00-00-000Z/restore",
+      headers: requestHeaders()
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json()).toEqual({ restored: ["pdf"] });
+    expect(calls).toContain("restore:2026-06-29T10-00-00-000Z");
 
     await app.close();
   });

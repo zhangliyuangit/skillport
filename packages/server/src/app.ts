@@ -6,7 +6,8 @@ import type {
   DiscoveredSkill,
   ManagedSkill,
   SkillDiff,
-  SkillStatusReport
+  SkillStatusReport,
+  SnapshotInfo
 } from "@skillport/core";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import { z, ZodError } from "zod";
@@ -28,6 +29,9 @@ export interface ApiService {
   remove(name: string): Promise<{ kind: "completed"; name: string }>;
   doctor(): Promise<Diagnosis[]>;
   repair(): Promise<{ fixed: number; remaining: Diagnosis[] }>;
+  listSnapshots(): Promise<SnapshotInfo[]>;
+  snapshot(label?: string): Promise<SnapshotInfo>;
+  restoreSnapshot(id: string): Promise<{ restored: string[] }>;
 }
 
 export interface AgentAdminApi {
@@ -175,6 +179,20 @@ export function buildApp(options: {
 
   app.get("/api/doctor", async () => service.doctor());
   app.post("/api/doctor/repair", async () => service.repair());
+
+  app.get("/api/snapshots", async () => service.listSnapshots());
+
+  app.post("/api/snapshots", async (request) => {
+    const body = z
+      .object({ label: z.string().min(1).optional() })
+      .strict()
+      .parse(request.body ?? {});
+    return service.snapshot(body.label);
+  });
+
+  app.post<{ Params: { id: string } }>("/api/snapshots/:id/restore", async (request) =>
+    service.restoreSnapshot(request.params.id)
+  );
 
   app.get("/api/agents", async () => requireAgents().list());
 

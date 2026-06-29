@@ -49,7 +49,10 @@ function api(): SkillPortApi {
     removeAgent: vi.fn(async (): Promise<AgentConfig[]> => []),
     populateAgent: vi.fn(async () => ({ installed: [], skipped: [] })),
     doctor: vi.fn(async () => []),
-    repair: vi.fn(async () => ({ fixed: 0, remaining: [] }))
+    repair: vi.fn(async () => ({ fixed: 0, remaining: [] })),
+    listSnapshots: vi.fn(async () => []),
+    createSnapshot: vi.fn(async () => ({ id: "2026-01-01T00-00-00-000Z", createdAt: "2026-01-01T00-00-00-000Z" })),
+    restoreSnapshot: vi.fn(async () => ({ restored: [] }))
   };
 }
 

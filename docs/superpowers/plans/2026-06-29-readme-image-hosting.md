@@ -70,18 +70,18 @@ npm test
 
 Expected: typecheck succeeds and all tests pass.
 
-- [ ] **Step 3: Commit with Codex co-author attribution**
+- [x] **Step 3: Commit with Codex co-author attribution**
 
 Run:
 
 ```bash
 git add README.md docs/superpowers/plans/2026-06-29-readme-image-hosting.md
-git commit -m "docs: serve README images through CDN" -m "Co-authored-by: openai-codex[bot] <177053821+openai-codex[bot]@users.noreply.github.com>"
+git commit -m "docs: serve README images through CDN" -m "Co-authored-by: openai-codex[bot] <215057067+openai-codex[bot]@users.noreply.github.com>"
 ```
 
 Expected: commit succeeds with the repository owner as primary author and Codex as co-author.
 
-- [ ] **Step 4: Push and verify GitHub rendering**
+- [x] **Step 4: Push and verify GitHub rendering**
 
 Run:
 

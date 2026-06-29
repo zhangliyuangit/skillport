@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.svg" alt="SkillPort" width="300">
+<img src="https://cdn.jsdelivr.net/gh/zhangliyuangit/skillport@master/docs/assets/logo.svg" alt="SkillPort" width="300">
 
 **一个本地中心目录，统一管理 Codex · Claude · Qoder 的所有 Skill。**
 
@@ -15,7 +15,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/assets/skills.png" alt="SkillPort 管理页面" width="920">
+  <img src="https://cdn.jsdelivr.net/gh/zhangliyuangit/skillport@master/docs/assets/skills.png" alt="SkillPort 管理页面" width="920">
 </p>
 
 ---

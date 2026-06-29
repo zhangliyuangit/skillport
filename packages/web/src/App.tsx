@@ -42,7 +42,7 @@ function AppShell({ api }: { api: SkillPortApi }) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">Skill<span>Port</span></div>
+        <div className="brand"><span className="brand-word">SkillPort</span></div>
         <nav aria-label="主导航">
           <NavButton active={page === "skills"} onClick={() => setPage("skills")} icon={<SquaresFour />}>
             技能

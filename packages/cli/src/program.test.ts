@@ -33,6 +33,7 @@ function fakeService(overrides: Partial<CliService> = {}): CliService {
       name,
       agents: { codex: "symlink", claude: "symlink" }
     }),
+    update: async (name) => ({ name, updated: false }),
     enable: async (name) => ({ kind: "completed", name }),
     disable: async (name) => ({ kind: "completed", name }),
     deleteSkill: async (agent, name) => ({ kind: "completed", name, agent }),

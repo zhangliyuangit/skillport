@@ -218,6 +218,7 @@ tbody tr.selected { background: var(--iris-soft); }
 .hljs-deletion { color: #f0908a; }
 .hljs-emphasis { font-style: italic; } .hljs-strong { font-weight: 700; }
 .resolution-actions { display: grid; gap: 9px; margin-top: 22px; }
+.update-action { margin: 2px 0 18px; }
 
 /* ---- settings ---- */
 .standalone-page { max-width: 1140px; }

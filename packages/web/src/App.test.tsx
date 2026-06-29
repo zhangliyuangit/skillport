@@ -36,6 +36,7 @@ function api(): SkillPortApi {
     add: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "work-report" })),
     install: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "pdf" })),
     sync: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "code-review" })),
+    update: vi.fn(async (name: string) => ({ name, updated: false })),
     setEnabled: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "pdf" })),
     deleteSkill: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "pdf" })),
     remove: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "pdf" })),

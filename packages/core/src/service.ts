@@ -508,6 +508,98 @@ export class SkillPortService {
     return { name, text, truncated };
   }
 
+  /**
+   * Re-pulls a GitHub-sourced Skill: downloads the latest, and if the content
+   * changed, snapshots, replaces the central copy and re-links enabled Agents.
+   */
+  async update(nameValue: string): Promise<{ name: string; updated: boolean }> {
+    const name = parseSkillName(nameValue);
+    const initial = await this.options.stateStore.load();
+    const initialManaged = initial.skills[name];
+    if (!initialManaged) throw new Error(`Skill is not managed: ${name}`);
+    if (!initialManaged.source) throw new Error(`${name} has no GitHub source to update from`);
+
+    const downloaded = await this.githubInstaller.download(initialManaged.source);
+    try {
+      const external = await inspectSkillTree(downloaded.path);
+      return await this.options.stateStore.withLock(async () => {
+        const state = await this.options.stateStore.load();
+        const managed = state.skills[name];
+        if (!managed) throw new Error(`Skill is not managed: ${name}`);
+        if (external.fingerprint === managed.fingerprint) return { name, updated: false };
+
+        await this.snapshots.create(`before-update-${name}`);
+        const canonical = this.canonicalPath(name);
+        const targets = this.enabledAgents(managed);
+        const operationRoot = path.join(this.options.root, ".operations", randomUUID());
+        const staged = path.join(operationRoot, "staged");
+        await mkdir(path.dirname(staged), { recursive: true });
+        await cp(downloaded.path, staged, { recursive: true, dereference: false });
+
+        const backups = new Map<string, string>();
+        const installed: string[] = [];
+        try {
+          for (const agent of targets) {
+            const destination = agent.skillPath(name);
+            const backup = path.join(operationRoot, "backups", agent.id);
+            await mkdir(path.dirname(backup), { recursive: true });
+            await rename(destination, backup);
+            backups.set(destination, backup);
+          }
+          const canonicalBackup = path.join(operationRoot, "backups", "canonical");
+          await rename(canonical, canonicalBackup);
+          backups.set(canonical, canonicalBackup);
+          await rename(staged, canonical);
+
+          const modes = {} as Record<AgentId, SyncMode>;
+          for (const id of managed.disabled ?? []) {
+            if (managed.agents[id]) modes[id] = managed.agents[id]!;
+          }
+          for (const agent of targets) {
+            installed.push(agent.skillPath(name));
+            if (managed.agents[agent.id] === "copy") {
+              await agent.installCopy(name, canonical);
+              modes[agent.id] = "copy";
+            } else {
+              try {
+                await agent.installLink(name, canonical);
+                modes[agent.id] = "symlink";
+              } catch {
+                await agent.installCopy(name, canonical);
+                modes[agent.id] = "copy";
+              }
+            }
+          }
+          await this.options.stateStore.save({
+            schemaVersion: 1,
+            skills: {
+              ...state.skills,
+              [name]: {
+                ...managed,
+                agents: modes,
+                fingerprint: external.fingerprint,
+                updatedAt: this.now().toISOString()
+              }
+            }
+          });
+          await rm(operationRoot, { recursive: true, force: true });
+          return { name, updated: true };
+        } catch (error) {
+          for (const destination of installed) await rm(destination, { recursive: true, force: true });
+          await rm(canonical, { recursive: true, force: true });
+          for (const [destination, backup] of [...backups].reverse()) {
+            await mkdir(path.dirname(destination), { recursive: true });
+            await rename(backup, destination).catch(() => undefined);
+          }
+          await rm(operationRoot, { recursive: true, force: true });
+          throw error;
+        }
+      });
+    } finally {
+      await downloaded.cleanup();
+    }
+  }
+
   async diff(nameValue: string): Promise<SkillDiff> {
     const name = parseSkillName(nameValue);
     const entries = await Promise.all(

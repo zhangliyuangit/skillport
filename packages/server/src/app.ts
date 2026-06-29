@@ -20,6 +20,7 @@ export interface ApiService {
   add(name: string, from?: AgentId): Promise<AddResult>;
   install(url: string, path?: string, from?: AgentId | "github"): Promise<AddResult>;
   sync(name: string, source: AgentId | "central"): Promise<AddResult>;
+  update(name: string): Promise<{ name: string; updated: boolean }>;
   enable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
   disable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
   deleteSkill(agent: AgentId, name: string): Promise<{ kind: "completed"; name: string; agent: AgentId }>;
@@ -139,6 +140,10 @@ export function buildApp(options: {
       .parse(request.body);
     return sendOperation(reply, await service.sync(request.params.name, body.from));
   });
+
+  app.post<{ Params: { name: string } }>("/api/skills/:name/update", async (request) =>
+    service.update(request.params.name)
+  );
 
   app.post<{ Params: { name: string } }>("/api/skills/:name/disable", async (request) => {
     const body = z.object({ agent: z.string().min(1) }).strict().parse(request.body);

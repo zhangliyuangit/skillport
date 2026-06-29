@@ -36,6 +36,7 @@ export interface CliService {
   diff(name: string): Promise<SkillDiff>;
   status(name?: string): Promise<SkillStatusReport[]>;
   sync(name: string, source: AgentId | "central"): Promise<AddResult>;
+  update(name: string): Promise<{ name: string; updated: boolean }>;
   enable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
   disable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
   deleteSkill(agent: AgentId, name: string): Promise<{ kind: "completed"; name: string; agent: AgentId }>;
@@ -152,6 +153,28 @@ export async function runCli(
     .action(async (skill: string, options: { agent: string }) => {
       const result = await service.enable(skill, parseAgent(options.agent));
       stdout.write(`${result.name} is now enabled for ${options.agent}.\n`);
+    });
+
+  program
+    .command("update")
+    .argument("[skill]")
+    .option("--all", "update every GitHub-sourced Skill")
+    .action(async (skill: string | undefined, options: { all?: boolean }) => {
+      if (options.all) {
+        const sourced = (await service.list()).filter((managed) => managed.source);
+        if (sourced.length === 0) {
+          stdout.write("No GitHub-sourced Skills to update.\n");
+          return;
+        }
+        for (const managed of sourced) {
+          const result = await service.update(managed.name);
+          stdout.write(`${managed.name}: ${result.updated ? "updated" : "up to date"}\n`);
+        }
+        return;
+      }
+      if (!skill) throw new InvalidInputError("Provide a Skill name or --all");
+      const result = await service.update(skill);
+      stdout.write(`${result.name}: ${result.updated ? "updated to latest" : "already up to date"}\n`);
     });
 
   program

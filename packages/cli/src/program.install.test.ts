@@ -22,6 +22,7 @@ it("passes a GitHub URL and subdirectory to install", async () => {
     diff: async () => ({ name: "", text: "", truncated: false }),
     status: async () => [],
     sync: async () => { throw new Error("unused"); },
+    update: async (name: string) => ({ name, updated: false }),
     enable: async () => ({ kind: "completed" as const, name: "" }),
     disable: async () => ({ kind: "completed" as const, name: "" }),
     deleteSkill: async (agent: string, name: string) => ({ kind: "completed" as const, name, agent }),

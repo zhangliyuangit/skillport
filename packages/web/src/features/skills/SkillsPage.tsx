@@ -77,6 +77,20 @@ export function SkillsPage({
     }
   };
 
+  const updateSkill = async () => {
+    if (!selected) return;
+    setPending(true);
+    try {
+      const result = await api.update(selected.name);
+      toast.show(result.updated ? `${selected.name} 已更新到最新` : `${selected.name} 已是最新`, "success");
+      await load();
+    } catch (caught) {
+      toast.show(caught instanceof Error ? caught.message : "更新失败", "error");
+    } finally {
+      setPending(false);
+    }
+  };
+
   const toggleAgent = async (name: string, agent: string, enabled: boolean) => {
     setPending(true);
     try {
@@ -144,6 +158,9 @@ export function SkillsPage({
             <dt>上次更新</dt><dd>{new Date(selected.updatedAt).toLocaleString("zh-CN")}</dd>
             <dt>状态</dt><dd><Status value={selected.overall} /></dd>
           </dl>
+          {selected.source && (
+            <button className="button secondary update-action" disabled={pending} onClick={() => void updateSkill()}><GithubLogo weight="fill" />从 GitHub 更新</button>
+          )}
           <div className="section-title">内容 <span>SKILL.md</span></div>
           {content ? <SkillContentView text={content.text} truncated={content.truncated} /> : <pre className="skill-content">加载中…</pre>}
           <div className="section-title">差异 <span>SKILL.md</span></div>

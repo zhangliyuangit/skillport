@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AgentAdapter } from "./agents.js";
+import type { GitHubInstaller } from "./github.js";
 import { SkillPortService } from "./service.js";
 import { StateStore } from "./state-store.js";
 
@@ -212,6 +213,36 @@ describe("doctor", () => {
     expect(result.fixed).toBeGreaterThanOrEqual(1);
     expect(await f.service.doctor()).toEqual([]);
     expect((await lstat(path.join(f.codexRoot, "pdf"))).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe("update", () => {
+  it("re-pulls a changed GitHub Skill and reports up-to-date otherwise", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "skillport-update-"));
+    const root = path.join(home, ".skillport");
+    const codexRoot = path.join(home, ".codex", "skills");
+    const claudeRoot = path.join(home, ".claude", "skills");
+    const download = path.join(home, "download");
+    await mkdir(download, { recursive: true });
+    await writeFile(path.join(download, "SKILL.md"), "v1");
+
+    const installer = {
+      download: async () => ({ path: download, cleanup: async () => undefined })
+    } as unknown as GitHubInstaller;
+    const service = new SkillPortService({
+      root,
+      stateStore: new StateStore(root),
+      agents: [new AgentAdapter("codex", codexRoot), new AgentAdapter("claude", claudeRoot)],
+      githubInstaller: installer
+    });
+
+    await service.install("https://github.com/acme/pdf");
+    await writeFile(path.join(download, "SKILL.md"), "v2");
+
+    expect(await service.update("pdf")).toEqual({ name: "pdf", updated: true });
+    expect(await readFile(path.join(root, "skills", "pdf", "SKILL.md"), "utf8")).toBe("v2");
+    expect(await readFile(path.join(codexRoot, "pdf", "SKILL.md"), "utf8")).toBe("v2");
+    expect(await service.update("pdf")).toEqual({ name: "pdf", updated: false });
   });
 });
 

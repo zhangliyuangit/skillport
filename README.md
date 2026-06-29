@@ -98,6 +98,10 @@ skillport agent remove qoder
 skillport install https://github.com/acme/skills
 skillport install https://github.com/acme/skills --path skills/pdf
 
+# 更新：从记录的 GitHub 来源重新拉取最新（有变化才动，自动先快照）
+skillport update pdf
+skillport update --all
+
 # 删除某个 Agent 里未纳管的 Skill（移入 ~/.skillport/trash，可手动恢复）
 skillport delete junk --agent codex
 

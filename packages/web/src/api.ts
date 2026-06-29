@@ -53,6 +53,12 @@ export interface Diagnosis {
   fixable: boolean;
 }
 
+export interface Snapshot {
+  id: string;
+  createdAt: string;
+  label?: string;
+}
+
 export interface SkillPortApi {
   listSkills(): Promise<SkillSummary[]>;
   discover(): Promise<DiscoveredSkill[]>;
@@ -73,6 +79,9 @@ export interface SkillPortApi {
   populateAgent(id: string): Promise<PopulateResult>;
   doctor(): Promise<Diagnosis[]>;
   repair(): Promise<{ fixed: number; remaining: Diagnosis[] }>;
+  listSnapshots(): Promise<Snapshot[]>;
+  createSnapshot(label?: string): Promise<Snapshot>;
+  restoreSnapshot(id: string): Promise<{ restored: string[] }>;
 }
 
 const TOKEN_STORAGE_KEY = "skillport.token";
@@ -173,6 +182,14 @@ export function createHttpApi(): SkillPortApi {
     populateAgent: (id) =>
       request(`/api/agents/${encodeURIComponent(id)}/populate`, { method: "POST" }),
     doctor: () => request("/api/doctor"),
-    repair: () => request("/api/doctor/repair", { method: "POST" })
+    repair: () => request("/api/doctor/repair", { method: "POST" }),
+    listSnapshots: () => request("/api/snapshots"),
+    createSnapshot: (label) =>
+      request("/api/snapshots", {
+        method: "POST",
+        body: JSON.stringify({ ...(label ? { label } : {}) })
+      }),
+    restoreSnapshot: (id) =>
+      request(`/api/snapshots/${encodeURIComponent(id)}/restore`, { method: "POST" })
   };
 }

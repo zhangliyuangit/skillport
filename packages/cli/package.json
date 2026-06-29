@@ -1,7 +1,27 @@
 {
   "name": "skillport",
   "version": "0.3.0",
-  "private": true,
+  "description": "本地中心目录，统一管理 Codex · Claude · Qoder 的 AI Skill —— 软链接同步、不上传云端、无需守护进程。",
+  "license": "MIT",
+  "author": "zhangliyuangit",
+  "homepage": "https://github.com/zhangliyuangit/skillport#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhangliyuangit/skillport.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/zhangliyuangit/skillport/issues"
+  },
+  "keywords": [
+    "skills",
+    "ai",
+    "agent",
+    "codex",
+    "claude",
+    "cli",
+    "local-first"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -12,6 +32,10 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "scripts": {
     "build": "tsup && node scripts/copy-web.mjs",
     "test": "vitest run",

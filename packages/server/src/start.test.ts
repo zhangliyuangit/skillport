@@ -37,7 +37,10 @@ const service: ApiService = {
   deleteSkill: async (agent, name) => ({ kind: "completed", name, agent }),
   remove: async (name) => ({ kind: "completed", name }),
   doctor: async () => [],
-  repair: async () => ({ fixed: 0, remaining: [] })
+  repair: async () => ({ fixed: 0, remaining: [] }),
+  listSnapshots: async () => [],
+  snapshot: async () => ({ id: "2026-01-01T00-00-00-000Z", createdAt: "2026-01-01T00-00-00-000Z" }),
+  restoreSnapshot: async () => ({ restored: [] })
 };
 
 it("binds to loopback with an ephemeral port and tokenized URL", async () => {

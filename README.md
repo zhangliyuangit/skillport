@@ -19,7 +19,7 @@ SkillPort 是一个本地优先的 Skill 管理器，用同一个中心目录管
 需要 Node.js 22 或更高版本。
 
 ```bash
-npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.1.1/skillport-0.1.1.tgz"
+npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.2.0/skillport-0.2.0.tgz"
 ```
 
 安装后检查版本并打开管理页面：
@@ -32,7 +32,7 @@ skillport ui
 升级时重复执行安装命令：
 
 ```bash
-npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.1.1/skillport-0.1.1.tgz"
+npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.2.0/skillport-0.2.0.tgz"
 ```
 
 卸载：

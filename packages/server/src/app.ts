@@ -2,6 +2,7 @@ import type {
   AddResult,
   AgentConfig,
   AgentId,
+  Diagnosis,
   DiscoveredSkill,
   ManagedSkill,
   SkillDiff,
@@ -18,11 +19,15 @@ export interface ApiService {
   preview(name: string, agent?: AgentId): Promise<{ name: string; text: string; truncated: boolean }>;
   add(name: string, from?: AgentId): Promise<AddResult>;
   install(url: string, path?: string, from?: AgentId | "github"): Promise<AddResult>;
+  create(name: string, description?: string): Promise<AddResult>;
   sync(name: string, source: AgentId | "central"): Promise<AddResult>;
+  update(name: string): Promise<{ name: string; updated: boolean }>;
   enable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
   disable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
   deleteSkill(agent: AgentId, name: string): Promise<{ kind: "completed"; name: string; agent: AgentId }>;
   remove(name: string): Promise<{ kind: "completed"; name: string }>;
+  doctor(): Promise<Diagnosis[]>;
+  repair(): Promise<{ fixed: number; remaining: Diagnosis[] }>;
 }
 
 export interface AgentAdminApi {
@@ -117,6 +122,14 @@ export function buildApp(options: {
     return sendOperation(reply, await service.add(request.params.name, body.from));
   });
 
+  app.post("/api/skills/create", async (request, reply) => {
+    const body = z
+      .object({ name: z.string().min(1), description: z.string().optional() })
+      .strict()
+      .parse(request.body);
+    return sendOperation(reply, await service.create(body.name, body.description));
+  });
+
   app.post("/api/install", async (request, reply) => {
     const body = z
       .object({
@@ -137,6 +150,10 @@ export function buildApp(options: {
     return sendOperation(reply, await service.sync(request.params.name, body.from));
   });
 
+  app.post<{ Params: { name: string } }>("/api/skills/:name/update", async (request) =>
+    service.update(request.params.name)
+  );
+
   app.post<{ Params: { name: string } }>("/api/skills/:name/disable", async (request) => {
     const body = z.object({ agent: z.string().min(1) }).strict().parse(request.body);
     return service.disable(request.params.name, body.agent);
@@ -155,6 +172,9 @@ export function buildApp(options: {
     "/api/agents/:agentId/skills/:name",
     async (request) => service.deleteSkill(request.params.agentId, request.params.name)
   );
+
+  app.get("/api/doctor", async () => service.doctor());
+  app.post("/api/doctor/repair", async () => service.repair());
 
   app.get("/api/agents", async () => requireAgents().list());
 

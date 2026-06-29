@@ -21,15 +21,23 @@ const service: ApiService = {
     name: "installed",
     agents: { codex: "symlink", claude: "symlink" }
   }),
+  create: async (name) => ({
+    kind: "completed",
+    name,
+    agents: { codex: "symlink", claude: "symlink" }
+  }),
   sync: async (name) => ({
     kind: "completed",
     name,
     agents: { codex: "symlink", claude: "symlink" }
   }),
+  update: async (name) => ({ name, updated: false }),
   enable: async (name) => ({ kind: "completed", name }),
   disable: async (name) => ({ kind: "completed", name }),
   deleteSkill: async (agent, name) => ({ kind: "completed", name, agent }),
-  remove: async (name) => ({ kind: "completed", name })
+  remove: async (name) => ({ kind: "completed", name }),
+  doctor: async () => [],
+  repair: async () => ({ fixed: 0, remaining: [] })
 };
 
 it("binds to loopback with an ephemeral port and tokenized URL", async () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, readFile, readdir, readlink, rename, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentAdapter, AgentEntry } from "./agents.js";
 import type { AgentId, ManagedSkill, SyncMode } from "./domain.js";
@@ -41,6 +41,14 @@ export interface SkillStatusReport {
   description?: string;
 }
 
+export interface Diagnosis {
+  name: string;
+  agent?: AgentId;
+  kind: "missing" | "dangling" | "drift" | "orphan" | "foreign" | "broken";
+  detail: string;
+  fixable: boolean;
+}
+
 export class SkillPortService {
   private readonly now: () => Date;
   private readonly githubInstaller: GitHubInstaller;
@@ -65,6 +73,76 @@ export class SkillPortService {
   /** Deletes the entire SkillPort home (central copies, state, snapshots, trash). */
   async purge(): Promise<void> {
     await rm(this.options.root, { recursive: true, force: true });
+  }
+
+  /** Scans for integrity problems across managed state, central copies and Agents. */
+  async doctor(): Promise<Diagnosis[]> {
+    const state = await this.options.stateStore.load();
+    const centralRoot = path.resolve(this.options.root, "skills");
+    const issues: Diagnosis[] = [];
+
+    for (const [name, managed] of Object.entries(state.skills)) {
+      const canonical = this.canonicalPath(name);
+      const central = await inspectCanonical(canonical);
+      if (!central) {
+        issues.push({ name, kind: "broken", detail: "中心副本缺失", fixable: false });
+        continue;
+      }
+      if (central.fingerprint !== managed.fingerprint) {
+        issues.push({ name, kind: "drift", detail: "中心内容与记录指纹不一致", fixable: false });
+      }
+      for (const agent of this.enabledAgents(managed)) {
+        let entry: AgentEntry;
+        try {
+          entry = await agent.inspect(name, canonical);
+        } catch {
+          issues.push({ name, agent: agent.id, kind: "foreign", detail: "无法读取该端副本", fixable: false });
+          continue;
+        }
+        if (entry.kind === "missing") {
+          issues.push({ name, agent: agent.id, kind: "missing", detail: "该端缺少链接", fixable: true });
+        } else if (entry.kind === "foreign-link") {
+          issues.push({ name, agent: agent.id, kind: "foreign", detail: "指向无关目标", fixable: false });
+        } else if (entry.kind === "local" && entry.fingerprint !== central.fingerprint) {
+          issues.push({ name, agent: agent.id, kind: "drift", detail: "该端副本与中心不一致", fixable: false });
+        }
+      }
+    }
+
+    for (const agent of this.agentAdapters) {
+      const entries = await readdir(agent.root, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const target = agent.skillPath(entry.name);
+        const linkStat = await lstat(target).catch(() => undefined);
+        if (!linkStat?.isSymbolicLink()) continue;
+        const resolved = path.resolve(path.dirname(target), await readlink(target));
+        if (!resolved.startsWith(centralRoot + path.sep)) continue;
+        if (!(await pathExists(resolved))) {
+          issues.push({ name: entry.name, agent: agent.id, kind: "dangling", detail: "软链接指向已删除的中心副本", fixable: true });
+        }
+      }
+    }
+
+    const centralEntries = await readdir(centralRoot, { withFileTypes: true }).catch(() => []);
+    for (const entry of centralEntries) {
+      if (entry.isDirectory() && !state.skills[entry.name]) {
+        issues.push({ name: entry.name, kind: "orphan", detail: "中心副本不在受管状态中", fixable: false });
+      }
+    }
+
+    return issues.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Fixes the auto-fixable problems (missing links, dangling links). */
+  async repair(): Promise<{ fixed: number; remaining: Diagnosis[] }> {
+    return this.options.stateStore.withLock(async () => {
+      const before = (await this.doctor()).filter((issue) => issue.fixable).length;
+      const state = await this.options.stateStore.load();
+      await this.reconcileLinks(state);
+      const remaining = await this.doctor();
+      const fixed = before - remaining.filter((issue) => issue.fixable).length;
+      return { fixed, remaining };
+    });
   }
 
   /**
@@ -210,6 +288,57 @@ export class SkillPortService {
               source,
               updatedAt: this.now().toISOString()
             }
+          }
+        });
+        await journal.commit();
+        return { kind: "completed", name, agents: modes };
+      } catch (error) {
+        await journal.rollback(canonical);
+        throw error;
+      } finally {
+        await rm(operationRoot, { recursive: true, force: true });
+      }
+    });
+  }
+
+  /** Scaffolds a brand-new Skill from a SKILL.md template and manages it. */
+  async create(nameValue: string, description?: string): Promise<AddResult> {
+    const name = parseSkillName(nameValue);
+    const canonical = this.canonicalPath(name);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      if (state.skills[name]) throw new Error(`Skill is already managed: ${name}`);
+      const current = await this.inspectLocalCopies(name, canonical);
+      if (current.candidates.length > 0) {
+        throw new Error(`A Skill named ${name} already exists; use add instead`);
+      }
+
+      const operationRoot = path.join(this.options.root, ".operations", randomUUID());
+      const staged = path.join(operationRoot, "staged", name);
+      const journal = new TransactionJournal(operationRoot);
+      await mkdir(staged, { recursive: true });
+      await writeFile(path.join(staged, "SKILL.md"), buildSkillTemplate(name, description), "utf8");
+      const { fingerprint } = await inspectSkillTree(staged);
+
+      try {
+        await mkdir(path.dirname(canonical), { recursive: true });
+        await rename(staged, canonical);
+        const modes = {} as Record<AgentId, SyncMode>;
+        for (const agent of this.agentAdapters) {
+          journal.markInstalled(agent.skillPath(name));
+          try {
+            await agent.installLink(name, canonical);
+            modes[agent.id] = "symlink";
+          } catch {
+            await agent.installCopy(name, canonical);
+            modes[agent.id] = "copy";
+          }
+        }
+        await this.options.stateStore.save({
+          schemaVersion: 1,
+          skills: {
+            ...state.skills,
+            [name]: { name, agents: modes, fingerprint, updatedAt: this.now().toISOString() }
           }
         });
         await journal.commit();
@@ -428,6 +557,98 @@ export class SkillPortService {
     const root = agentId ? this.agentAdapter(agentId).skillPath(name) : this.canonicalPath(name);
     const { text, truncated } = await readSkillContent(root);
     return { name, text, truncated };
+  }
+
+  /**
+   * Re-pulls a GitHub-sourced Skill: downloads the latest, and if the content
+   * changed, snapshots, replaces the central copy and re-links enabled Agents.
+   */
+  async update(nameValue: string): Promise<{ name: string; updated: boolean }> {
+    const name = parseSkillName(nameValue);
+    const initial = await this.options.stateStore.load();
+    const initialManaged = initial.skills[name];
+    if (!initialManaged) throw new Error(`Skill is not managed: ${name}`);
+    if (!initialManaged.source) throw new Error(`${name} has no GitHub source to update from`);
+
+    const downloaded = await this.githubInstaller.download(initialManaged.source);
+    try {
+      const external = await inspectSkillTree(downloaded.path);
+      return await this.options.stateStore.withLock(async () => {
+        const state = await this.options.stateStore.load();
+        const managed = state.skills[name];
+        if (!managed) throw new Error(`Skill is not managed: ${name}`);
+        if (external.fingerprint === managed.fingerprint) return { name, updated: false };
+
+        await this.snapshots.create(`before-update-${name}`);
+        const canonical = this.canonicalPath(name);
+        const targets = this.enabledAgents(managed);
+        const operationRoot = path.join(this.options.root, ".operations", randomUUID());
+        const staged = path.join(operationRoot, "staged");
+        await mkdir(path.dirname(staged), { recursive: true });
+        await cp(downloaded.path, staged, { recursive: true, dereference: false });
+
+        const backups = new Map<string, string>();
+        const installed: string[] = [];
+        try {
+          for (const agent of targets) {
+            const destination = agent.skillPath(name);
+            const backup = path.join(operationRoot, "backups", agent.id);
+            await mkdir(path.dirname(backup), { recursive: true });
+            await rename(destination, backup);
+            backups.set(destination, backup);
+          }
+          const canonicalBackup = path.join(operationRoot, "backups", "canonical");
+          await rename(canonical, canonicalBackup);
+          backups.set(canonical, canonicalBackup);
+          await rename(staged, canonical);
+
+          const modes = {} as Record<AgentId, SyncMode>;
+          for (const id of managed.disabled ?? []) {
+            if (managed.agents[id]) modes[id] = managed.agents[id]!;
+          }
+          for (const agent of targets) {
+            installed.push(agent.skillPath(name));
+            if (managed.agents[agent.id] === "copy") {
+              await agent.installCopy(name, canonical);
+              modes[agent.id] = "copy";
+            } else {
+              try {
+                await agent.installLink(name, canonical);
+                modes[agent.id] = "symlink";
+              } catch {
+                await agent.installCopy(name, canonical);
+                modes[agent.id] = "copy";
+              }
+            }
+          }
+          await this.options.stateStore.save({
+            schemaVersion: 1,
+            skills: {
+              ...state.skills,
+              [name]: {
+                ...managed,
+                agents: modes,
+                fingerprint: external.fingerprint,
+                updatedAt: this.now().toISOString()
+              }
+            }
+          });
+          await rm(operationRoot, { recursive: true, force: true });
+          return { name, updated: true };
+        } catch (error) {
+          for (const destination of installed) await rm(destination, { recursive: true, force: true });
+          await rm(canonical, { recursive: true, force: true });
+          for (const [destination, backup] of [...backups].reverse()) {
+            await mkdir(path.dirname(destination), { recursive: true });
+            await rename(backup, destination).catch(() => undefined);
+          }
+          await rm(operationRoot, { recursive: true, force: true });
+          throw error;
+        }
+      });
+    } finally {
+      await downloaded.cleanup();
+    }
   }
 
   async diff(nameValue: string): Promise<SkillDiff> {
@@ -862,6 +1083,11 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 async function pathExists(target: string): Promise<boolean> {
   return stat(target).then(() => true).catch(() => false);
+}
+
+function buildSkillTemplate(name: string, description?: string): string {
+  const desc = (description ?? "").trim() || `TODO: 描述 ${name} 这个 Skill 的用途`;
+  return `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\nTODO: 在这里写 Skill 的正文与使用说明。\n`;
 }
 
 function chooseCandidate(

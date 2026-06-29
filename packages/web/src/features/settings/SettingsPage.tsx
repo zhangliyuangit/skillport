@@ -1,7 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { AgentConfig, SkillPortApi } from "../../api.js";
+import type { AgentConfig, Diagnosis, SkillPortApi } from "../../api.js";
 import { usePolling } from "../../hooks.js";
 import { useToast } from "../toast/Toast.js";
+
+const DIAG_LABEL: Record<Diagnosis["kind"], string> = {
+  missing: "缺少链接",
+  dangling: "死链",
+  drift: "内容漂移",
+  orphan: "孤儿副本",
+  foreign: "外部占用",
+  broken: "中心缺失"
+};
 
 export function SettingsPage({ api }: { api: SkillPortApi }) {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
@@ -9,6 +18,7 @@ export function SettingsPage({ api }: { api: SkillPortApi }) {
   const [root, setRoot] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [issues, setIssues] = useState<Diagnosis[]>();
   const toast = useToast();
 
   const load = async () => {
@@ -57,6 +67,20 @@ export function SettingsPage({ api }: { api: SkillPortApi }) {
       );
     });
 
+  const check = () =>
+    void run(async () => {
+      const found = await api.doctor();
+      setIssues(found);
+      toast.show(found.length ? `发现 ${found.length} 个问题` : "一切正常 ✓", found.length ? "error" : "success");
+    });
+
+  const repair = () =>
+    void run(async () => {
+      const result = await api.repair();
+      setIssues(result.remaining);
+      toast.show(`已修复 ${result.fixed} 个` + (result.remaining.length ? `，剩 ${result.remaining.length} 个需手动处理` : ""), "success");
+    });
+
   return (
     <section className="standalone-page settings-page">
       <header className="page-header"><div><h1>设置</h1><p>管理 SkillPort 同步的 Agent 端。中心仓库：~/.skillport/skills。</p></div></header>
@@ -89,6 +113,33 @@ export function SettingsPage({ api }: { api: SkillPortApi }) {
         <button className="button primary" type="submit" disabled={busy}>添加 Agent</button>
       </form>
       <p className="settings-note">新增 Agent 后，点对应行的“补齐”把已有受管 Skill 的中心版本装进该端（自动跳过有冲突或本地改动的）。</p>
+
+      <div className="section-title">健康检查 <span>死链 / 漂移 / 孤儿</span></div>
+      <div className="row-actions">
+        <button className="button secondary" disabled={busy} onClick={check}>检查</button>
+        {issues && issues.some((issue) => issue.fixable) && (
+          <button className="button primary" disabled={busy} onClick={repair}>一键修复</button>
+        )}
+      </div>
+      {issues && (issues.length === 0 ? (
+        <p className="settings-note">✓ 一切正常，没有发现问题。</p>
+      ) : (
+        <div className="table-wrap" style={{ marginTop: 14 }}>
+          <table>
+            <thead><tr><th>Skill</th><th>Agent</th><th>问题</th><th>说明</th></tr></thead>
+            <tbody>
+              {issues.map((issue, index) => (
+                <tr key={`${issue.name}-${issue.agent ?? ""}-${index}`}>
+                  <td className="strong">{issue.name}</td>
+                  <td>{issue.agent ?? "—"}</td>
+                  <td><span className={`agent ${issue.fixable ? "warning" : "muted"}`}>{DIAG_LABEL[issue.kind]}</span></td>
+                  <td>{issue.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
     </section>
   );
 }

@@ -26,6 +26,11 @@ function fakeService(overrides: Partial<CliService> = {}): CliService {
       name: "installed",
       agents: { codex: "symlink", claude: "symlink" }
     }),
+    create: async (name) => ({
+      kind: "completed",
+      name,
+      agents: { codex: "symlink", claude: "symlink" }
+    }),
     diff: async (name) => ({ name, text: "no difference", truncated: false }),
     status: async () => [],
     sync: async (name) => ({
@@ -33,6 +38,7 @@ function fakeService(overrides: Partial<CliService> = {}): CliService {
       name,
       agents: { codex: "symlink", claude: "symlink" }
     }),
+    update: async (name) => ({ name, updated: false }),
     enable: async (name) => ({ kind: "completed", name }),
     disable: async (name) => ({ kind: "completed", name }),
     deleteSkill: async (agent, name) => ({ kind: "completed", name, agent }),
@@ -42,6 +48,8 @@ function fakeService(overrides: Partial<CliService> = {}): CliService {
     listSnapshots: async () => [],
     restoreSnapshot: async () => ({ restored: [] }),
     purge: async () => undefined,
+    doctor: async () => [],
+    repair: async () => ({ fixed: 0, remaining: [] }),
     ...overrides
   };
 }

@@ -19,9 +19,15 @@ it("passes a GitHub URL and subdirectory to install", async () => {
         agents: { codex: "symlink" as const, claude: "symlink" as const }
       };
     },
+    create: async (name: string) => ({
+      kind: "completed" as const,
+      name,
+      agents: { codex: "symlink" as const, claude: "symlink" as const }
+    }),
     diff: async () => ({ name: "", text: "", truncated: false }),
     status: async () => [],
     sync: async () => { throw new Error("unused"); },
+    update: async (name: string) => ({ name, updated: false }),
     enable: async () => ({ kind: "completed" as const, name: "" }),
     disable: async () => ({ kind: "completed" as const, name: "" }),
     deleteSkill: async (agent: string, name: string) => ({ kind: "completed" as const, name, agent }),
@@ -30,7 +36,9 @@ it("passes a GitHub URL and subdirectory to install", async () => {
     snapshot: async () => ({ id: "snap-1", createdAt: "snap-1" }),
     listSnapshots: async () => [],
     restoreSnapshot: async () => ({ restored: [] }),
-    purge: async () => undefined
+    purge: async () => undefined,
+    doctor: async () => [],
+    repair: async () => ({ fixed: 0, remaining: [] })
   } satisfies CliService;
   const stdout = writer();
   const exitCode = await runCli(

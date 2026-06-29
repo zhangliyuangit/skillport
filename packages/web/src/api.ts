@@ -45,6 +45,14 @@ export interface PopulateResult {
   skipped: string[];
 }
 
+export interface Diagnosis {
+  name: string;
+  agent?: string;
+  kind: "missing" | "dangling" | "drift" | "orphan" | "foreign" | "broken";
+  detail: string;
+  fixable: boolean;
+}
+
 export interface SkillPortApi {
   listSkills(): Promise<SkillSummary[]>;
   discover(): Promise<DiscoveredSkill[]>;
@@ -53,7 +61,9 @@ export interface SkillPortApi {
   previewAgent(agent: AgentId, name: string): Promise<SkillContent>;
   add(name: string, from?: AgentId): Promise<OperationResult>;
   install(url: string, path?: string): Promise<OperationResult>;
+  createSkill(name: string, description?: string): Promise<OperationResult>;
   sync(name: string, from: AgentId | "central"): Promise<OperationResult>;
+  update(name: string): Promise<{ name: string; updated: boolean }>;
   setEnabled(name: string, agent: AgentId, enabled: boolean): Promise<OperationResult>;
   deleteSkill(agent: AgentId, name: string): Promise<OperationResult>;
   remove(name: string): Promise<OperationResult>;
@@ -61,6 +71,8 @@ export interface SkillPortApi {
   addAgent(id: string, root: string): Promise<AgentConfig[]>;
   removeAgent(id: string): Promise<AgentConfig[]>;
   populateAgent(id: string): Promise<PopulateResult>;
+  doctor(): Promise<Diagnosis[]>;
+  repair(): Promise<{ fixed: number; remaining: Diagnosis[] }>;
 }
 
 const TOKEN_STORAGE_KEY = "skillport.token";
@@ -126,11 +138,18 @@ export function createHttpApi(): SkillPortApi {
         method: "POST",
         body: JSON.stringify({ url, ...(path ? { path } : {}) })
       }),
+    createSkill: (name, description) =>
+      request("/api/skills/create", {
+        method: "POST",
+        body: JSON.stringify({ name, ...(description ? { description } : {}) })
+      }),
     sync: (name, from) =>
       request(`/api/skills/${encodeURIComponent(name)}/sync`, {
         method: "POST",
         body: JSON.stringify({ from })
       }),
+    update: (name) =>
+      request(`/api/skills/${encodeURIComponent(name)}/update`, { method: "POST" }),
     setEnabled: (name, agent, enabled) =>
       request(`/api/skills/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`, {
         method: "POST",
@@ -152,6 +171,8 @@ export function createHttpApi(): SkillPortApi {
     removeAgent: (id) =>
       request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
     populateAgent: (id) =>
-      request(`/api/agents/${encodeURIComponent(id)}/populate`, { method: "POST" })
+      request(`/api/agents/${encodeURIComponent(id)}/populate`, { method: "POST" }),
+    doctor: () => request("/api/doctor"),
+    repair: () => request("/api/doctor/repair", { method: "POST" })
   };
 }

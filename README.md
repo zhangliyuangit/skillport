@@ -19,7 +19,7 @@ SkillPort 是一个本地优先的 Skill 管理器，用同一个中心目录管
 需要 Node.js 22 或更高版本。
 
 ```bash
-npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.2.0/skillport-0.2.0.tgz"
+npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.3.0/skillport-0.3.0.tgz"
 ```
 
 安装后检查版本并打开管理页面：
@@ -32,7 +32,7 @@ skillport ui
 升级时重复执行安装命令：
 
 ```bash
-npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.2.0/skillport-0.2.0.tgz"
+npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.3.0/skillport-0.3.0.tgz"
 ```
 
 卸载：
@@ -74,6 +74,9 @@ skillport scan
 skillport add pdf
 skillport add pdf --from codex
 
+# 新建：生成一个 SKILL.md 模板并纳入所有 Agent
+skillport new my-skill --description "一句话说明用途"
+
 # 查看全部状态和单个 Skill 的差异
 skillport status
 skillport status pdf
@@ -98,6 +101,10 @@ skillport agent remove qoder
 skillport install https://github.com/acme/skills
 skillport install https://github.com/acme/skills --path skills/pdf
 
+# 更新：从记录的 GitHub 来源重新拉取最新（有变化才动，自动先快照）
+skillport update pdf
+skillport update --all
+
 # 删除某个 Agent 里未纳管的 Skill（移入 ~/.skillport/trash，可手动恢复）
 skillport delete junk --agent codex
 
@@ -106,6 +113,10 @@ skillport remove pdf
 
 # 全部停止管理：把每个 Skill 的软链接换成各端独立真实副本（卸载前的安全脱钩）
 skillport remove --all
+
+# 健康检查：扫描死链 / 内容漂移 / 孤儿副本，--fix 修复可自动处理的
+skillport doctor
+skillport doctor --fix
 
 # 快照：sync 前会自动打快照，也可手动；可列出、回滚
 skillport snapshot create --label 改动前

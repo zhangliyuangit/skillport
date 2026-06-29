@@ -2,6 +2,7 @@ import type {
   AddResult,
   AgentConfig,
   AgentId,
+  Diagnosis,
   DiscoveredSkill,
   ManagedSkill,
   SkillDiff,
@@ -15,6 +16,7 @@ import {
   renderAdd,
   renderAgents,
   renderList,
+  renderDiagnoses,
   renderScan,
   renderSnapshots,
   renderStatus
@@ -31,9 +33,11 @@ export interface CliService {
   scan(): Promise<DiscoveredSkill[]>;
   add(name: string, from?: AgentId): Promise<AddResult>;
   install(url: string, subpath?: string, from?: AgentId | "github"): Promise<AddResult>;
+  create(name: string, description?: string): Promise<AddResult>;
   diff(name: string): Promise<SkillDiff>;
   status(name?: string): Promise<SkillStatusReport[]>;
   sync(name: string, source: AgentId | "central"): Promise<AddResult>;
+  update(name: string): Promise<{ name: string; updated: boolean }>;
   enable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
   disable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
   deleteSkill(agent: AgentId, name: string): Promise<{ kind: "completed"; name: string; agent: AgentId }>;
@@ -43,6 +47,8 @@ export interface CliService {
   listSnapshots(): Promise<SnapshotInfo[]>;
   restoreSnapshot(id: string): Promise<{ restored: string[] }>;
   purge(): Promise<void>;
+  doctor(): Promise<Diagnosis[]>;
+  repair(): Promise<{ fixed: number; remaining: Diagnosis[] }>;
 }
 
 export interface CliDependencies {
@@ -64,7 +70,7 @@ export async function runCli(
   const program = new Command()
     .name("skillport")
     .description("Keep Codex and Claude Code Skills in one local repository")
-    .version("0.2.0")
+    .version("0.3.0")
     .exitOverride()
     .configureOutput({
       writeOut: (text) => stdout.write(text),
@@ -85,6 +91,17 @@ export async function runCli(
       const rendered = renderAdd(result);
       stdout.write(rendered.text);
       exitCode = rendered.exitCode;
+    });
+
+  program
+    .command("new")
+    .argument("<skill>")
+    .option("--description <text>")
+    .action(async (skill: string, options: { description?: string }) => {
+      const result = await service.create(skill, options.description);
+      if (result.kind === "completed") {
+        stdout.write(`${result.name} created and managed by SkillPort.\n`);
+      }
     });
 
   program.command("diff").argument("<skill>").action(async (skill: string) => {
@@ -148,6 +165,28 @@ export async function runCli(
     .action(async (skill: string, options: { agent: string }) => {
       const result = await service.enable(skill, parseAgent(options.agent));
       stdout.write(`${result.name} is now enabled for ${options.agent}.\n`);
+    });
+
+  program
+    .command("update")
+    .argument("[skill]")
+    .option("--all", "update every GitHub-sourced Skill")
+    .action(async (skill: string | undefined, options: { all?: boolean }) => {
+      if (options.all) {
+        const sourced = (await service.list()).filter((managed) => managed.source);
+        if (sourced.length === 0) {
+          stdout.write("No GitHub-sourced Skills to update.\n");
+          return;
+        }
+        for (const managed of sourced) {
+          const result = await service.update(managed.name);
+          stdout.write(`${managed.name}: ${result.updated ? "updated" : "up to date"}\n`);
+        }
+        return;
+      }
+      if (!skill) throw new InvalidInputError("Provide a Skill name or --all");
+      const result = await service.update(skill);
+      stdout.write(`${result.name}: ${result.updated ? "updated to latest" : "already up to date"}\n`);
     });
 
   program
@@ -219,6 +258,30 @@ export async function runCli(
       stdout.write(`Skipped (conflicts/local changes): ${result.skipped.join(", ")}\n`);
     }
   });
+
+  program
+    .command("doctor")
+    .option("--fix", "repair auto-fixable issues (missing/dangling links)")
+    .action(async (options: { fix?: boolean }) => {
+      if (options.fix) {
+        const result = await service.repair();
+        stdout.write(`Repaired ${result.fixed} issue(s).\n`);
+        if (result.remaining.length > 0) {
+          stdout.write(renderDiagnoses(result.remaining));
+          exitCode = 4;
+        } else {
+          stdout.write("All clear.\n");
+        }
+        return;
+      }
+      const issues = await service.doctor();
+      if (issues.length === 0) {
+        stdout.write("All clear — no problems found.\n");
+        return;
+      }
+      stdout.write(renderDiagnoses(issues));
+      exitCode = 4;
+    });
 
   const snapshot = program.command("snapshot").description("Back up and restore state");
   snapshot

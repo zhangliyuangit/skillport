@@ -7,6 +7,7 @@ import { X } from "@phosphor-icons/react/X";
 import { useEffect, useState } from "react";
 import type { DiscoveredSkill, SkillContent, SkillPortApi } from "../../api.js";
 import { usePolling } from "../../hooks.js";
+import { SkillContentView } from "../../SkillContentView.js";
 import { useToast } from "../toast/Toast.js";
 
 const ADDABLE = new Set<DiscoveredSkill["classification"]>([
@@ -134,7 +135,7 @@ export function DiscoverPage({ api }: { api: SkillPortApi }) {
           <div className="modal preview-modal" role="dialog" aria-modal="true">
             <button className="icon-button close" aria-label="关闭" onClick={() => setPreview(undefined)}><X /></button>
             <h2>{preview.name}</h2><span className="muted">SKILL.md</span>
-            <pre className="skill-content">{preview.text}{preview.truncated ? "\n…（已截断）" : ""}</pre>
+            <SkillContentView text={preview.text} truncated={preview.truncated} />
           </div>
         </div>
       )}

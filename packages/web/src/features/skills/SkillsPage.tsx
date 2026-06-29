@@ -9,6 +9,7 @@ import { X } from "@phosphor-icons/react/X";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { AgentConfig, SkillContent, SkillDiff, SkillPortApi, SkillSummary } from "../../api.js";
 import { usePolling } from "../../hooks.js";
+import { SkillContentView } from "../../SkillContentView.js";
 import { useToast } from "../toast/Toast.js";
 
 export function SkillsPage({
@@ -144,7 +145,7 @@ export function SkillsPage({
             <dt>状态</dt><dd><Status value={selected.overall} /></dd>
           </dl>
           <div className="section-title">内容 <span>SKILL.md</span></div>
-          <pre className="skill-content">{content ? content.text + (content.truncated ? "\n…（已截断）" : "") : "加载中…"}</pre>
+          {content ? <SkillContentView text={content.text} truncated={content.truncated} /> : <pre className="skill-content">加载中…</pre>}
           <div className="section-title">差异 <span>SKILL.md</span></div>
           <pre className="diff">{diff?.text ?? "当前版本没有可显示的文本差异。"}</pre>
           <div className="resolution-actions">

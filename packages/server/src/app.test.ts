@@ -14,6 +14,7 @@ function service(overrides: Partial<ApiService> = {}): ApiService {
     preview: async (name) => ({ name, text: "body", truncated: false }),
     add: async (name) => completed(name),
     install: async () => completed("installed"),
+    create: async (name) => completed(name),
     sync: async (name) => completed(name),
     update: async (name) => ({ name, updated: false }),
     enable: async (name) => ({ kind: "completed", name }),

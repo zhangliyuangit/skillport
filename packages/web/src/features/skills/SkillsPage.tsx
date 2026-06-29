@@ -14,10 +14,12 @@ import { useToast } from "../toast/Toast.js";
 
 export function SkillsPage({
   api,
-  onInstall
+  onInstall,
+  onNewSkill
 }: {
   api: SkillPortApi;
   onInstall(): void;
+  onNewSkill(): void;
 }) {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [agents, setAgents] = useState<AgentConfig[]>([]);
@@ -113,7 +115,8 @@ export function SkillsPage({
         <div className="toolbar">
           <label className="search"><MagnifyingGlass /><input aria-label="搜索技能" placeholder="搜索技能..." value={query} onChange={(event) => setQuery(event.target.value)} /></label>
           <button className="button secondary" onClick={() => void load()}><ArrowClockwise />扫描</button>
-          <button className="button primary" onClick={onInstall}><GithubLogo weight="fill" />从 GitHub 安装</button>
+          <button className="button secondary" onClick={onInstall}><GithubLogo weight="fill" />从 GitHub 安装</button>
+          <button className="button primary" onClick={onNewSkill}><File weight="fill" />新建 Skill</button>
         </div>
         {error && <div className="inline-error">{error}</div>}
         <div className="table-wrap">

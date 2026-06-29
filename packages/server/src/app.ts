@@ -19,6 +19,7 @@ export interface ApiService {
   preview(name: string, agent?: AgentId): Promise<{ name: string; text: string; truncated: boolean }>;
   add(name: string, from?: AgentId): Promise<AddResult>;
   install(url: string, path?: string, from?: AgentId | "github"): Promise<AddResult>;
+  create(name: string, description?: string): Promise<AddResult>;
   sync(name: string, source: AgentId | "central"): Promise<AddResult>;
   update(name: string): Promise<{ name: string; updated: boolean }>;
   enable(name: string, agent: AgentId): Promise<{ kind: "completed"; name: string }>;
@@ -119,6 +120,14 @@ export function buildApp(options: {
       .strict()
       .parse(request.body ?? {});
     return sendOperation(reply, await service.add(request.params.name, body.from));
+  });
+
+  app.post("/api/skills/create", async (request, reply) => {
+    const body = z
+      .object({ name: z.string().min(1), description: z.string().optional() })
+      .strict()
+      .parse(request.body);
+    return sendOperation(reply, await service.create(body.name, body.description));
   });
 
   app.post("/api/install", async (request, reply) => {

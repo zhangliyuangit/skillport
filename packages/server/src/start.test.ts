@@ -21,6 +21,11 @@ const service: ApiService = {
     name: "installed",
     agents: { codex: "symlink", claude: "symlink" }
   }),
+  create: async (name) => ({
+    kind: "completed",
+    name,
+    agents: { codex: "symlink", claude: "symlink" }
+  }),
   sync: async (name) => ({
     kind: "completed",
     name,

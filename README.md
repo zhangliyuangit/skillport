@@ -74,6 +74,9 @@ skillport scan
 skillport add pdf
 skillport add pdf --from codex
 
+# 新建：生成一个 SKILL.md 模板并纳入所有 Agent
+skillport new my-skill --description "一句话说明用途"
+
 # 查看全部状态和单个 Skill 的差异
 skillport status
 skillport status pdf

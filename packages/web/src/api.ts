@@ -61,6 +61,7 @@ export interface SkillPortApi {
   previewAgent(agent: AgentId, name: string): Promise<SkillContent>;
   add(name: string, from?: AgentId): Promise<OperationResult>;
   install(url: string, path?: string): Promise<OperationResult>;
+  createSkill(name: string, description?: string): Promise<OperationResult>;
   sync(name: string, from: AgentId | "central"): Promise<OperationResult>;
   update(name: string): Promise<{ name: string; updated: boolean }>;
   setEnabled(name: string, agent: AgentId, enabled: boolean): Promise<OperationResult>;
@@ -136,6 +137,11 @@ export function createHttpApi(): SkillPortApi {
       request("/api/install", {
         method: "POST",
         body: JSON.stringify({ url, ...(path ? { path } : {}) })
+      }),
+    createSkill: (name, description) =>
+      request("/api/skills/create", {
+        method: "POST",
+        body: JSON.stringify({ name, ...(description ? { description } : {}) })
       }),
     sync: (name, from) =>
       request(`/api/skills/${encodeURIComponent(name)}/sync`, {

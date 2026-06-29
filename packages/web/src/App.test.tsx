@@ -35,6 +35,7 @@ function api(): SkillPortApi {
     previewAgent: vi.fn(async (_agent, name) => ({ name, text: "SKILL body", truncated: false })),
     add: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "work-report" })),
     install: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "pdf" })),
+    createSkill: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "new-skill" })),
     sync: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "code-review" })),
     update: vi.fn(async (name: string) => ({ name, updated: false })),
     setEnabled: vi.fn(async (): Promise<OperationResult> => ({ kind: "completed", name: "pdf" })),
@@ -89,6 +90,17 @@ describe("SkillPort app", () => {
     const row = await screen.findByRole("row", { name: /work-report/ });
     await user.click(within(row).getByRole("button", { name: "纳入管理" }));
     expect(target.add).toHaveBeenCalledWith("work-report", "codex");
+  });
+
+  it("creates a new Skill through the dialog", async () => {
+    const user = userEvent.setup();
+    const target = api();
+    render(<App api={target} />);
+    await screen.findByRole("heading", { name: "技能" });
+    await user.click(screen.getByRole("button", { name: "新建 Skill" }));
+    await user.type(screen.getByLabelText("名称"), "my-skill");
+    await user.click(screen.getByRole("button", { name: "创建" }));
+    expect(target.createSkill).toHaveBeenCalledWith("my-skill", undefined);
   });
 
   it("installs a GitHub subdirectory through the modal", async () => {

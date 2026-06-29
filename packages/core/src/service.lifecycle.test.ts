@@ -199,6 +199,22 @@ describe("custom Agents", () => {
   });
 });
 
+describe("create", () => {
+  it("scaffolds a new managed Skill from a template", async () => {
+    const f = await fixture();
+    const result = await f.service.create("brand-new", "does a thing");
+    expect(result).toMatchObject({ kind: "completed", name: "brand-new" });
+
+    const md = await readFile(path.join(f.root, "skills", "brand-new", "SKILL.md"), "utf8");
+    expect(md).toContain("name: brand-new");
+    expect(md).toContain("does a thing");
+    expect((await lstat(path.join(f.codexRoot, "brand-new"))).isSymbolicLink()).toBe(true);
+    expect((await lstat(path.join(f.claudeRoot, "brand-new"))).isSymbolicLink()).toBe(true);
+
+    await expect(f.service.create("brand-new")).rejects.toThrow(/already managed/);
+  });
+});
+
 describe("doctor", () => {
   it("reports a missing link and repairs it", async () => {
     const f = await fixture();

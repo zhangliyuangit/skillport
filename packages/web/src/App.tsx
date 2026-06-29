@@ -6,6 +6,7 @@ import type { SkillPortApi } from "./api.js";
 import { DiscoverPage } from "./features/discover/DiscoverPage.js";
 import { InstallDialog } from "./features/install/InstallDialog.js";
 import { SettingsPage } from "./features/settings/SettingsPage.js";
+import { NewSkillDialog } from "./features/skills/NewSkillDialog.js";
 import { SkillsPage } from "./features/skills/SkillsPage.js";
 import { ToastProvider } from "./features/toast/Toast.js";
 
@@ -22,6 +23,7 @@ export function App({ api }: { api: SkillPortApi }) {
 function AppShell({ api }: { api: SkillPortApi }) {
   const [page, setPage] = useState<Page>("skills");
   const [installOpen, setInstallOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
 
   return (
     <div className="app-shell">
@@ -46,7 +48,7 @@ function AppShell({ api }: { api: SkillPortApi }) {
 
       <main className="workspace">
         {page === "skills" && (
-          <SkillsPage api={api} onInstall={() => setInstallOpen(true)} />
+          <SkillsPage api={api} onInstall={() => setInstallOpen(true)} onNewSkill={() => setNewOpen(true)} />
         )}
         {page === "discover" && <DiscoverPage api={api} />}
         {page === "settings" && <SettingsPage api={api} />}
@@ -58,6 +60,17 @@ function AppShell({ api }: { api: SkillPortApi }) {
           onClose={() => setInstallOpen(false)}
           onInstalled={() => {
             setInstallOpen(false);
+            setPage("skills");
+          }}
+        />
+      )}
+
+      {newOpen && (
+        <NewSkillDialog
+          api={api}
+          onClose={() => setNewOpen(false)}
+          onCreated={() => {
+            setNewOpen(false);
             setPage("skills");
           }}
         />

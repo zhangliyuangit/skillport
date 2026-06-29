@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, readFile, readdir, readlink, rename, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentAdapter, AgentEntry } from "./agents.js";
 import type { AgentId, ManagedSkill, SyncMode } from "./domain.js";
@@ -288,6 +288,57 @@ export class SkillPortService {
               source,
               updatedAt: this.now().toISOString()
             }
+          }
+        });
+        await journal.commit();
+        return { kind: "completed", name, agents: modes };
+      } catch (error) {
+        await journal.rollback(canonical);
+        throw error;
+      } finally {
+        await rm(operationRoot, { recursive: true, force: true });
+      }
+    });
+  }
+
+  /** Scaffolds a brand-new Skill from a SKILL.md template and manages it. */
+  async create(nameValue: string, description?: string): Promise<AddResult> {
+    const name = parseSkillName(nameValue);
+    const canonical = this.canonicalPath(name);
+    return this.options.stateStore.withLock(async () => {
+      const state = await this.options.stateStore.load();
+      if (state.skills[name]) throw new Error(`Skill is already managed: ${name}`);
+      const current = await this.inspectLocalCopies(name, canonical);
+      if (current.candidates.length > 0) {
+        throw new Error(`A Skill named ${name} already exists; use add instead`);
+      }
+
+      const operationRoot = path.join(this.options.root, ".operations", randomUUID());
+      const staged = path.join(operationRoot, "staged", name);
+      const journal = new TransactionJournal(operationRoot);
+      await mkdir(staged, { recursive: true });
+      await writeFile(path.join(staged, "SKILL.md"), buildSkillTemplate(name, description), "utf8");
+      const { fingerprint } = await inspectSkillTree(staged);
+
+      try {
+        await mkdir(path.dirname(canonical), { recursive: true });
+        await rename(staged, canonical);
+        const modes = {} as Record<AgentId, SyncMode>;
+        for (const agent of this.agentAdapters) {
+          journal.markInstalled(agent.skillPath(name));
+          try {
+            await agent.installLink(name, canonical);
+            modes[agent.id] = "symlink";
+          } catch {
+            await agent.installCopy(name, canonical);
+            modes[agent.id] = "copy";
+          }
+        }
+        await this.options.stateStore.save({
+          schemaVersion: 1,
+          skills: {
+            ...state.skills,
+            [name]: { name, agents: modes, fingerprint, updatedAt: this.now().toISOString() }
           }
         });
         await journal.commit();
@@ -1032,6 +1083,11 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 
 async function pathExists(target: string): Promise<boolean> {
   return stat(target).then(() => true).catch(() => false);
+}
+
+function buildSkillTemplate(name: string, description?: string): string {
+  const desc = (description ?? "").trim() || `TODO: 描述 ${name} 这个 Skill 的用途`;
+  return `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\nTODO: 在这里写 Skill 的正文与使用说明。\n`;
 }
 
 function chooseCandidate(

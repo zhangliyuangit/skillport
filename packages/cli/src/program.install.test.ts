@@ -19,6 +19,11 @@ it("passes a GitHub URL and subdirectory to install", async () => {
         agents: { codex: "symlink" as const, claude: "symlink" as const }
       };
     },
+    create: async (name: string) => ({
+      kind: "completed" as const,
+      name,
+      agents: { codex: "symlink" as const, claude: "symlink" as const }
+    }),
     diff: async () => ({ name: "", text: "", truncated: false }),
     status: async () => [],
     sync: async () => { throw new Error("unused"); },

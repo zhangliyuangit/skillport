@@ -33,6 +33,7 @@ export interface CliService {
   scan(): Promise<DiscoveredSkill[]>;
   add(name: string, from?: AgentId): Promise<AddResult>;
   install(url: string, subpath?: string, from?: AgentId | "github"): Promise<AddResult>;
+  create(name: string, description?: string): Promise<AddResult>;
   diff(name: string): Promise<SkillDiff>;
   status(name?: string): Promise<SkillStatusReport[]>;
   sync(name: string, source: AgentId | "central"): Promise<AddResult>;
@@ -90,6 +91,17 @@ export async function runCli(
       const rendered = renderAdd(result);
       stdout.write(rendered.text);
       exitCode = rendered.exitCode;
+    });
+
+  program
+    .command("new")
+    .argument("<skill>")
+    .option("--description <text>")
+    .action(async (skill: string, options: { description?: string }) => {
+      const result = await service.create(skill, options.description);
+      if (result.kind === "completed") {
+        stdout.write(`${result.name} created and managed by SkillPort.\n`);
+      }
     });
 
   program.command("diff").argument("<skill>").action(async (skill: string) => {

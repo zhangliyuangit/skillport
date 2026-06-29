@@ -42,6 +42,8 @@ function fakeService(overrides: Partial<CliService> = {}): CliService {
     listSnapshots: async () => [],
     restoreSnapshot: async () => ({ restored: [] }),
     purge: async () => undefined,
+    doctor: async () => [],
+    repair: async () => ({ fixed: 0, remaining: [] }),
     ...overrides
   };
 }

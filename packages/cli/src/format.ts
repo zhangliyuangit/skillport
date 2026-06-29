@@ -1,6 +1,7 @@
 import type {
   AddResult,
   AgentConfig,
+  Diagnosis,
   DiscoveredSkill,
   ManagedSkill,
   SkillStatusReport,
@@ -118,6 +119,23 @@ export function renderStatus(items: SkillStatusReport[]): string {
         return { text: value, tone: agentStateTone(value) };
       }),
       { text: item.overall, tone: statusTone(item.overall) }
+    ])
+  );
+}
+
+function diagnosisTone(kind: Diagnosis["kind"]): Tone {
+  return ({ missing: "red", dangling: "red", broken: "red", drift: "yellow", foreign: "yellow", orphan: "dim" } as Record<Diagnosis["kind"], Tone>)[kind];
+}
+
+export function renderDiagnoses(items: Diagnosis[]): string {
+  if (items.length === 0) return "All clear.\n";
+  return table(
+    ["SKILL", "AGENT", "ISSUE", "DETAIL"],
+    items.map((item) => [
+      item.name,
+      item.agent ?? "—",
+      { text: item.kind, tone: diagnosisTone(item.kind) },
+      item.detail
     ])
   );
 }

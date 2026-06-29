@@ -19,6 +19,8 @@ function service(overrides: Partial<ApiService> = {}): ApiService {
     disable: async (name) => ({ kind: "completed", name }),
     deleteSkill: async (agent, name) => ({ kind: "completed", name, agent }),
     remove: async (name) => ({ kind: "completed", name }),
+    doctor: async () => [],
+    repair: async () => ({ fixed: 0, remaining: [] }),
     ...overrides
   };
 }

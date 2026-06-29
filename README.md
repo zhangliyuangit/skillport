@@ -107,6 +107,10 @@ skillport remove pdf
 # 全部停止管理：把每个 Skill 的软链接换成各端独立真实副本（卸载前的安全脱钩）
 skillport remove --all
 
+# 健康检查：扫描死链 / 内容漂移 / 孤儿副本，--fix 修复可自动处理的
+skillport doctor
+skillport doctor --fix
+
 # 快照：sync 前会自动打快照，也可手动；可列出、回滚
 skillport snapshot create --label 改动前
 skillport snapshot list

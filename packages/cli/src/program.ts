@@ -2,6 +2,7 @@ import type {
   AddResult,
   AgentConfig,
   AgentId,
+  Diagnosis,
   DiscoveredSkill,
   ManagedSkill,
   SkillDiff,
@@ -15,6 +16,7 @@ import {
   renderAdd,
   renderAgents,
   renderList,
+  renderDiagnoses,
   renderScan,
   renderSnapshots,
   renderStatus
@@ -43,6 +45,8 @@ export interface CliService {
   listSnapshots(): Promise<SnapshotInfo[]>;
   restoreSnapshot(id: string): Promise<{ restored: string[] }>;
   purge(): Promise<void>;
+  doctor(): Promise<Diagnosis[]>;
+  repair(): Promise<{ fixed: number; remaining: Diagnosis[] }>;
 }
 
 export interface CliDependencies {
@@ -219,6 +223,30 @@ export async function runCli(
       stdout.write(`Skipped (conflicts/local changes): ${result.skipped.join(", ")}\n`);
     }
   });
+
+  program
+    .command("doctor")
+    .option("--fix", "repair auto-fixable issues (missing/dangling links)")
+    .action(async (options: { fix?: boolean }) => {
+      if (options.fix) {
+        const result = await service.repair();
+        stdout.write(`Repaired ${result.fixed} issue(s).\n`);
+        if (result.remaining.length > 0) {
+          stdout.write(renderDiagnoses(result.remaining));
+          exitCode = 4;
+        } else {
+          stdout.write("All clear.\n");
+        }
+        return;
+      }
+      const issues = await service.doctor();
+      if (issues.length === 0) {
+        stdout.write("All clear — no problems found.\n");
+        return;
+      }
+      stdout.write(renderDiagnoses(issues));
+      exitCode = 4;
+    });
 
   const snapshot = program.command("snapshot").description("Back up and restore state");
   snapshot

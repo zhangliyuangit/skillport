@@ -45,7 +45,9 @@ function api(): SkillPortApi {
     ]),
     addAgent: vi.fn(async (): Promise<AgentConfig[]> => []),
     removeAgent: vi.fn(async (): Promise<AgentConfig[]> => []),
-    populateAgent: vi.fn(async () => ({ installed: [], skipped: [] }))
+    populateAgent: vi.fn(async () => ({ installed: [], skipped: [] })),
+    doctor: vi.fn(async () => []),
+    repair: vi.fn(async () => ({ fixed: 0, remaining: [] }))
   };
 }
 

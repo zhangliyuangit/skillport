@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rm,
   stat,
   symlink,
   writeFile
@@ -194,6 +195,23 @@ describe("custom Agents", () => {
     expect(await service.status("pdf")).toMatchObject([
       { name: "pdf", overall: "Synced", agents: { qoder: "linked" } }
     ]);
+  });
+});
+
+describe("doctor", () => {
+  it("reports a missing link and repairs it", async () => {
+    const f = await fixture();
+    await skill(f.codexRoot, "pdf", "# PDF");
+    await f.service.add("pdf");
+    await rm(path.join(f.codexRoot, "pdf"), { recursive: true, force: true });
+
+    const issues = await f.service.doctor();
+    expect(issues.some((issue) => issue.name === "pdf" && issue.agent === "codex" && issue.kind === "missing")).toBe(true);
+
+    const result = await f.service.repair();
+    expect(result.fixed).toBeGreaterThanOrEqual(1);
+    expect(await f.service.doctor()).toEqual([]);
+    expect((await lstat(path.join(f.codexRoot, "pdf"))).isSymbolicLink()).toBe(true);
   });
 });
 

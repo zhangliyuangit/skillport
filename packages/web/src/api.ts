@@ -45,6 +45,14 @@ export interface PopulateResult {
   skipped: string[];
 }
 
+export interface Diagnosis {
+  name: string;
+  agent?: string;
+  kind: "missing" | "dangling" | "drift" | "orphan" | "foreign" | "broken";
+  detail: string;
+  fixable: boolean;
+}
+
 export interface SkillPortApi {
   listSkills(): Promise<SkillSummary[]>;
   discover(): Promise<DiscoveredSkill[]>;
@@ -61,6 +69,8 @@ export interface SkillPortApi {
   addAgent(id: string, root: string): Promise<AgentConfig[]>;
   removeAgent(id: string): Promise<AgentConfig[]>;
   populateAgent(id: string): Promise<PopulateResult>;
+  doctor(): Promise<Diagnosis[]>;
+  repair(): Promise<{ fixed: number; remaining: Diagnosis[] }>;
 }
 
 const TOKEN_STORAGE_KEY = "skillport.token";
@@ -152,6 +162,8 @@ export function createHttpApi(): SkillPortApi {
     removeAgent: (id) =>
       request(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
     populateAgent: (id) =>
-      request(`/api/agents/${encodeURIComponent(id)}/populate`, { method: "POST" })
+      request(`/api/agents/${encodeURIComponent(id)}/populate`, { method: "POST" }),
+    doctor: () => request("/api/doctor"),
+    repair: () => request("/api/doctor/repair", { method: "POST" })
   };
 }

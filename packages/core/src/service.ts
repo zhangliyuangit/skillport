@@ -41,6 +41,14 @@ export interface SkillStatusReport {
   description?: string;
 }
 
+export interface Diagnosis {
+  name: string;
+  agent?: AgentId;
+  kind: "missing" | "dangling" | "drift" | "orphan" | "foreign" | "broken";
+  detail: string;
+  fixable: boolean;
+}
+
 export class SkillPortService {
   private readonly now: () => Date;
   private readonly githubInstaller: GitHubInstaller;
@@ -65,6 +73,76 @@ export class SkillPortService {
   /** Deletes the entire SkillPort home (central copies, state, snapshots, trash). */
   async purge(): Promise<void> {
     await rm(this.options.root, { recursive: true, force: true });
+  }
+
+  /** Scans for integrity problems across managed state, central copies and Agents. */
+  async doctor(): Promise<Diagnosis[]> {
+    const state = await this.options.stateStore.load();
+    const centralRoot = path.resolve(this.options.root, "skills");
+    const issues: Diagnosis[] = [];
+
+    for (const [name, managed] of Object.entries(state.skills)) {
+      const canonical = this.canonicalPath(name);
+      const central = await inspectCanonical(canonical);
+      if (!central) {
+        issues.push({ name, kind: "broken", detail: "中心副本缺失", fixable: false });
+        continue;
+      }
+      if (central.fingerprint !== managed.fingerprint) {
+        issues.push({ name, kind: "drift", detail: "中心内容与记录指纹不一致", fixable: false });
+      }
+      for (const agent of this.enabledAgents(managed)) {
+        let entry: AgentEntry;
+        try {
+          entry = await agent.inspect(name, canonical);
+        } catch {
+          issues.push({ name, agent: agent.id, kind: "foreign", detail: "无法读取该端副本", fixable: false });
+          continue;
+        }
+        if (entry.kind === "missing") {
+          issues.push({ name, agent: agent.id, kind: "missing", detail: "该端缺少链接", fixable: true });
+        } else if (entry.kind === "foreign-link") {
+          issues.push({ name, agent: agent.id, kind: "foreign", detail: "指向无关目标", fixable: false });
+        } else if (entry.kind === "local" && entry.fingerprint !== central.fingerprint) {
+          issues.push({ name, agent: agent.id, kind: "drift", detail: "该端副本与中心不一致", fixable: false });
+        }
+      }
+    }
+
+    for (const agent of this.agentAdapters) {
+      const entries = await readdir(agent.root, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const target = agent.skillPath(entry.name);
+        const linkStat = await lstat(target).catch(() => undefined);
+        if (!linkStat?.isSymbolicLink()) continue;
+        const resolved = path.resolve(path.dirname(target), await readlink(target));
+        if (!resolved.startsWith(centralRoot + path.sep)) continue;
+        if (!(await pathExists(resolved))) {
+          issues.push({ name: entry.name, agent: agent.id, kind: "dangling", detail: "软链接指向已删除的中心副本", fixable: true });
+        }
+      }
+    }
+
+    const centralEntries = await readdir(centralRoot, { withFileTypes: true }).catch(() => []);
+    for (const entry of centralEntries) {
+      if (entry.isDirectory() && !state.skills[entry.name]) {
+        issues.push({ name: entry.name, kind: "orphan", detail: "中心副本不在受管状态中", fixable: false });
+      }
+    }
+
+    return issues.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Fixes the auto-fixable problems (missing links, dangling links). */
+  async repair(): Promise<{ fixed: number; remaining: Diagnosis[] }> {
+    return this.options.stateStore.withLock(async () => {
+      const before = (await this.doctor()).filter((issue) => issue.fixable).length;
+      const state = await this.options.stateStore.load();
+      await this.reconcileLinks(state);
+      const remaining = await this.doctor();
+      const fixed = before - remaining.filter((issue) => issue.fixable).length;
+      return { fixed, remaining };
+    });
   }
 
   /**

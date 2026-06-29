@@ -30,7 +30,9 @@ it("passes a GitHub URL and subdirectory to install", async () => {
     snapshot: async () => ({ id: "snap-1", createdAt: "snap-1" }),
     listSnapshots: async () => [],
     restoreSnapshot: async () => ({ restored: [] }),
-    purge: async () => undefined
+    purge: async () => undefined,
+    doctor: async () => [],
+    repair: async () => ({ fixed: 0, remaining: [] })
   } satisfies CliService;
   const stdout = writer();
   const exitCode = await runCli(

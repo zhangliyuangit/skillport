@@ -70,7 +70,7 @@ export async function runCli(
   const program = new Command()
     .name("skillport")
     .description("Keep Codex and Claude Code Skills in one local repository")
-    .version("0.2.0")
+    .version("0.3.0")
     .exitOverride()
     .configureOutput({
       writeOut: (text) => stdout.write(text),

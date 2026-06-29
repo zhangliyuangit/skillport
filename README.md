@@ -1,6 +1,6 @@
 <div align="center">
 
-# SkillPort
+<img src="docs/assets/logo.svg" alt="SkillPort" width="300">
 
 **一个本地中心目录，统一管理 Codex · Claude · Qoder 的所有 Skill。**
 

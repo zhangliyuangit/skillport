@@ -5,6 +5,8 @@ export type AddResult =
       kind: "completed";
       name: string;
       agents: Record<AgentId, SyncMode>;
+      /** Archive entries safely skipped during a GitHub install (symlinks), if any. */
+      skipped?: string[];
     }
   | {
       kind: "decision-required";

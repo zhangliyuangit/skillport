@@ -11,6 +11,8 @@ export type ArchiveFetcher = (url: string, destination: string) => Promise<void>
 
 export interface DownloadedSkill {
   path: string;
+  /** Archive entries that were safely skipped (symlinks/hardlinks), if any. */
+  skipped: string[];
   cleanup(): Promise<void>;
 }
 
@@ -31,6 +33,7 @@ export class GitHubInstaller {
       await this.fetchArchive(url, archive);
       await mkdir(repository);
       let unsafeEntry: string | undefined;
+      const skipped: string[] = [];
       await tar.x({
         cwd: repository,
         file: archive,
@@ -45,8 +48,16 @@ export class GitHubInstaller {
           const unsafePath =
             path.isAbsolute(entryPath) ||
             entryPath.split(/[\\/]/).includes("..");
-          if (!safeType || unsafePath) {
+          if (unsafePath) {
             unsafeEntry = entryPath;
+            return false;
+          }
+          if (!safeType) {
+            // Symlinks/hardlinks are never written to disk — a downloaded Skill must
+            // not link out to arbitrary filesystem paths. But a harmless doc alias
+            // such as GEMINI.md -> AGENTS.md shouldn't abort the whole install: skip
+            // it and keep going. Never writing it neutralizes any symlink attack.
+            skipped.push(entryPath);
             return false;
           }
           return true;
@@ -64,6 +75,7 @@ export class GitHubInstaller {
       await inspectSkillTree(selected);
       return {
         path: selected,
+        skipped,
         cleanup: () => rm(temporaryRoot, { recursive: true, force: true })
       };
     } catch (error) {

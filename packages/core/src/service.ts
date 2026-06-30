@@ -237,7 +237,10 @@ export class SkillPortService {
           choices: ["github", ...inspection.candidates.map((candidate) => candidate.agent)]
         };
       }
-      return await this.installDownloaded(name, downloaded.path, source, external.fingerprint);
+      const result = await this.installDownloaded(name, downloaded.path, source, external.fingerprint);
+      return result.kind === "completed" && downloaded.skipped.length > 0
+        ? { ...result, skipped: downloaded.skipped }
+        : result;
     } finally {
       await downloaded.cleanup();
     }

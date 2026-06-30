@@ -2,14 +2,27 @@ import { GithubLogo } from "@phosphor-icons/react/GithubLogo";
 import { X } from "@phosphor-icons/react/X";
 import { useState } from "react";
 import type { SkillPortApi } from "../../api.js";
+import { useToast } from "../toast/Toast.js";
 
 export function InstallDialog({ api, onClose, onInstalled }: { api: SkillPortApi; onClose(): void; onInstalled(): void }) {
   const [url, setUrl] = useState("");
   const [path, setPath] = useState("");
   const [error, setError] = useState("");
+  const toast = useToast();
   const install = async () => {
-    try { await api.install(url, path || undefined); onInstalled(); }
-    catch (caught) { setError(caught instanceof Error ? caught.message : "安装失败"); }
+    try {
+      const result = await api.install(url, path || undefined);
+      const skipped = result.skipped ?? [];
+      if (skipped.length > 0) {
+        const names = skipped.map((entry) => entry.split("/").pop()).filter(Boolean).join("、");
+        toast.show(`已安装 ${result.name}，跳过 ${skipped.length} 个软链：${names}`, "success");
+      } else {
+        toast.show(`已安装 ${result.name}`, "success");
+      }
+      onInstalled();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "安装失败");
+    }
   };
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>

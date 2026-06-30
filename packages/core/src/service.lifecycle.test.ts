@@ -243,7 +243,7 @@ describe("update", () => {
     await writeFile(path.join(download, "SKILL.md"), "v1");
 
     const installer = {
-      download: async () => ({ path: download, cleanup: async () => undefined })
+      download: async () => ({ path: download, skipped: [], cleanup: async () => undefined })
     } as unknown as GitHubInstaller;
     const service = new SkillPortService({
       root,

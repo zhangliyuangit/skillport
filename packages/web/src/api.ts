@@ -38,6 +38,8 @@ export interface SkillContent {
 export interface OperationResult {
   kind: "completed";
   name: string;
+  /** Archive entries safely skipped during a GitHub install (symlinks), if any. */
+  skipped?: string[];
 }
 
 export interface PopulateResult {

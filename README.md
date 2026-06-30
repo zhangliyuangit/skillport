@@ -8,7 +8,7 @@
 
 [![release](https://img.shields.io/github/v/release/zhangliyuangit/skillport?color=4f46e5&label=release)](https://github.com/zhangliyuangit/skillport/releases)
 ![node](https://img.shields.io/badge/node-22%2B-2b2e34)
-![tests](https://img.shields.io/badge/tests-111%20passing-1f9d55)
+![tests](https://img.shields.io/badge/tests-113%20passing-1f9d55)
 [![license](https://img.shields.io/badge/license-MIT-4f46e5)](LICENSE)
 ![local-first](https://img.shields.io/badge/local--first-4f46e5)
 
@@ -43,7 +43,7 @@ SkillPort 把它们收进**一个中心目录**，每个 Agent 用软链接指�
 需要 Node.js 22 或更高版本。
 
 ```bash
-npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.4.0/skillport-0.4.0.tgz"
+npm install -g "https://github.com/zhangliyuangit/skillport/releases/download/v0.4.1/skillport-0.4.1.tgz"
 
 skillport --version
 skillport ui            # 打开本地中文管理页面
